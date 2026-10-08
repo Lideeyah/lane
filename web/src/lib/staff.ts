@@ -18,8 +18,12 @@ export function pairingLink(p: { till: Address; label: string; shop: string }, o
   return `${origin}/staff#${encodePayload(payload)}`;
 }
 
-export function parsePairing(fragment: string): PairingPayload | null {
-  const p = decodePayload<PairingPayload>(fragment);
+export function checkPairing(x: unknown): PairingPayload | null {
+  const p = x as Partial<PairingPayload> | null;
   if (!p || p.v !== 1 || typeof p.t !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(p.t)) return null;
-  return { v: 1, t: p.t, n: String(p.n ?? "Till"), s: String(p.s ?? "") };
+  return { v: 1, t: p.t, n: String(p.n ?? "Till").slice(0, 32), s: String(p.s ?? "").slice(0, 64) };
+}
+
+export function parsePairing(fragment: string): PairingPayload | null {
+  return checkPairing(decodePayload<unknown>(fragment));
 }

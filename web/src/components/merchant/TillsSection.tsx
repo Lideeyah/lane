@@ -6,6 +6,7 @@ import { formatAmount } from "@/lib/format";
 import { PasskeyError } from "@/lib/passkey";
 import { addTill, getActiveTill, renameTillLocal, setActiveTill } from "@/lib/shop";
 import { pairingLink } from "@/lib/staff";
+import { displayCode } from "@/lib/pairing";
 import { shopStore, type Shop, type Till } from "@/lib/storage";
 import { describe } from "@/lib/tx";
 import { todays, total, type LedgerState } from "@/lib/useLedger";
@@ -126,7 +127,11 @@ function TillDetail({ shop, till, onBack, onUse }: { shop: Shop; till: Till; onB
       {pairing ? (
         <div className="stack">
           <h3>Hand {till.label} to staff</h3>
-          <p>Scan this with the staff phone&rsquo;s camera. That phone will be able to take payments into {till.label}. It will never hold a key and can never move money.</p>
+          <p>
+            On the staff phone, go to <span className="num">{origin.replace(/^https?:\/\//, "")}/staff</span> and type this code. That phone will be able to take payments into {till.label}. It will never hold a key and can never move money.
+          </p>
+          <ShortCode shop={shop} till={till} />
+          <p className="small muted mt">Or scan this with the staff phone&rsquo;s camera.</p>
           {origin && <QR value={link} label={`Pairing code for ${till.label}`} />}
           <button className="btn btn-outline" onClick={() => navigator.clipboard?.writeText(link)}>
             Copy pairing link
@@ -149,6 +154,72 @@ function TillDetail({ shop, till, onBack, onUse }: { shop: Shop; till: Till; onB
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+type CodeState = { s: "loading" } | { s: "ready"; code: string; expiresAt: number } | { s: "expired" } | { s: "error"; msg: string };
+
+/** Six digits the staff member types. One-time, ten minutes, issued by the server. */
+function ShortCode({ shop, till }: { shop: Shop; till: Till }) {
+  const [state, setState] = useState<CodeState>({ s: "loading" });
+  const [now, setNow] = useState(() => Date.now());
+
+  async function issue() {
+    setState({ s: "loading" });
+    try {
+      const res = await fetch("/api/pair", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ till: till.address, label: till.label, shop: shop.name }),
+      });
+      const json = (await res.json()) as { ok: boolean; code?: string; expiresAt?: number; error?: string };
+      if (!json.ok || !json.code || !json.expiresAt) return setState({ s: "error", msg: json.error ?? "Could not make a code." });
+      setState({ s: "ready", code: json.code, expiresAt: json.expiresAt });
+    } catch {
+      setState({ s: "error", msg: "No connection. Use the QR code below." });
+    }
+  }
+
+  useEffect(() => {
+    void issue();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [till.address]);
+
+  useEffect(() => {
+    if (state.s !== "ready") return;
+    const t = window.setInterval(() => {
+      setNow(Date.now());
+      if (Date.now() >= state.expiresAt) setState({ s: "expired" });
+    }, 1000);
+    return () => window.clearInterval(t);
+  }, [state]);
+
+  if (state.s === "loading") return <p className="statusline">Making a code.</p>;
+  if (state.s === "error")
+    return (
+      <Band kind="warning">
+        <p>{state.msg}</p>
+      </Band>
+    );
+  if (state.s === "expired")
+    return (
+      <div className="stack">
+        <p className="statusline">That code has expired.</p>
+        <button className="btn btn-outline" onClick={issue}>
+          Make a new code
+        </button>
+      </div>
+    );
+  const left = Math.max(0, Math.ceil((state.expiresAt - now) / 1000));
+  return (
+    <div className="stack center" style={{ gap: 6, padding: "12px 0" }}>
+      <p className="amount-display" style={{ fontSize: 52, letterSpacing: "0.08em" }} aria-label={`Pairing code ${state.code.split("").join(" ")}`}>
+        {displayCode(state.code)}
+      </p>
+      <p className="small muted">
+        Works once. Expires in <span className="num">{Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}</span>
+      </p>
     </div>
   );
 }
