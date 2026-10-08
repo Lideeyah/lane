@@ -20,8 +20,12 @@ export function redis(): Redis | null {
 export async function allow(key: string, max: number, windowSeconds: number): Promise<boolean> {
   const r = redis();
   if (!r) return true;
-  const n = await r.incr(`rl:${key}`);
-  if (n === 1) await r.expire(`rl:${key}`, windowSeconds);
+  const k = `rl:${key}`;
+  const n = await r.incr(k);
+  if (n === 1) await r.expire(k, windowSeconds);
+  // If the call that set the window ever failed, the counter would never expire
+  // and this caller would be locked out for good. Repair it when blocking.
+  else if (n > max && (await r.ttl(k)) < 0) await r.expire(k, windowSeconds);
   return n <= max;
 }
 
