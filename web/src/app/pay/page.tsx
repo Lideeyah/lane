@@ -33,7 +33,8 @@ type State =
   | { s: "waiting-wallet" }
   | { s: "confirmed"; hash?: Hash }
   | { s: "declined"; msg?: string }
-  | { s: "insufficient"; balance: bigint };
+  | { s: "insufficient"; balance: bigint }
+  | { s: "no-wallet" };
 
 const pendingKey = (r: string) => `lane.pay.${r}`;
 
@@ -126,7 +127,23 @@ export default function Pay() {
       // No wallet in this browser: hand off to the phone's wallet app.
       await markPending(req);
       setState({ s: "waiting-wallet" });
+      // A wallet app taking over sends this page to the background. Focus alone is
+      // not enough: an "open with?" dialog takes focus without any app opening.
+      let left = false;
+      const away = () => {
+        if (document.visibilityState === "hidden") left = true;
+      };
+      document.addEventListener("visibilitychange", away);
       window.location.href = eip681(req);
+      window.setTimeout(() => {
+        document.removeEventListener("visibilitychange", away);
+        if (!left && document.visibilityState === "visible") {
+          try {
+            sessionStorage.removeItem(pendingKey(req.r));
+          } catch {}
+          setState({ s: "no-wallet" });
+        }
+      }, 2500);
       return;
     }
     setState({ s: "paying", how: "wallet" });
@@ -250,6 +267,26 @@ export default function Pay() {
           <Band kind="warning">
             <p>This request has expired. Ask the shop for a new one.</p>
           </Band>
+        </div>
+      )}
+
+      {state.s === "no-wallet" && (
+        <div className="stack">
+          <Band kind="warning">
+            <p>No wallet app opened on this phone. You can pay from a wallet on another device by sending exactly {formatAmount(amount)} {config.token.symbol} to this till.</p>
+          </Band>
+          <p className="small num" style={{ wordBreak: "break-all" }}>
+            {req.t}
+          </p>
+          <button className="btn btn-outline" onClick={() => navigator.clipboard?.writeText(req.t)}>
+            Copy the till&rsquo;s address
+          </button>
+          <button className="btn btn-outline" onClick={payWithFace}>
+            Pay with your face
+          </button>
+          <button className="btn btn-text" onClick={retry}>
+            Try your wallet again
+          </button>
         </div>
       )}
 
