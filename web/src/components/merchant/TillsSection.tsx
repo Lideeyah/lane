@@ -6,7 +6,7 @@ import { formatAmount } from "@/lib/format";
 import { PasskeyError } from "@/lib/passkey";
 import { addTill, getActiveTill, renameTillLocal, setActiveTill } from "@/lib/shop";
 import { pairingLink } from "@/lib/staff";
-import { displayCode } from "@/lib/pairing";
+import { displayCode, PAIR_TTL_SECONDS } from "@/lib/pairing";
 import { shopStore, type Shop, type Till } from "@/lib/storage";
 import { describe } from "@/lib/tx";
 import { todays, total, type LedgerState } from "@/lib/useLedger";
@@ -211,7 +211,8 @@ function ShortCode({ shop, till }: { shop: Shop; till: Till }) {
         </button>
       </div>
     );
-  const left = Math.max(0, Math.ceil((state.expiresAt - now) / 1000));
+  // Capped at the full lifetime, since this phone's clock may run slightly behind the server's.
+  const left = Math.min(PAIR_TTL_SECONDS, Math.max(0, Math.ceil((state.expiresAt - now) / 1000)));
   return (
     <div className="stack center" style={{ gap: 6, padding: "12px 0" }}>
       <p className="amount-display" style={{ fontSize: 52, letterSpacing: "0.08em" }} aria-label={`Pairing code ${state.code.split("").join(" ")}`}>
