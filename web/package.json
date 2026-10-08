@@ -13,10 +13,12 @@
   "dependencies": {
     "@scure/bip32": "^2.4.0",
     "@scure/bip39": "^2.4.0",
+    "@upstash/redis": "^1.39.0",
     "next": "16.4.0",
     "qrcode": "^1.5.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "server-only": "^0.0.1",
     "viem": "^2.57.3"
   },
   "devDependencies": {
