@@ -1,0 +1,22 @@
+# dependencies and builds
+node_modules/
+web/.next/
+web/next-env.d.ts
+web/tsconfig.tsbuildinfo
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+indexer/generated/
+
+# secrets and local state
+.env
+.env.local
+.env.*.local
+web/.env.local
+*.key
+.anvil.log
+.vercel
+
+
+# editor
+.DS_Store
