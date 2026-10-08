@@ -5,7 +5,14 @@ import { NextResponse, type NextRequest } from "next/server";
  * anywhere. Keys are derived in the browser, so cross-site scripting is the
  * only catastrophic bug in this system (architecture §10).
  */
+const ROUTES = new Set(["/", "/start", "/till", "/pay", "/staff"]);
+
 export function proxy(request: NextRequest) {
+  // Unrecognised paths resolve to the landing page: the usual cause is a truncated or mistyped link.
+  const path = request.nextUrl.pathname.replace(/\/+$/, "") || "/";
+  if (!ROUTES.has(path) && !path.startsWith("/api/")) {
+    return NextResponse.redirect(new URL("/", request.url), 307);
+  }
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const isDev = process.env.NODE_ENV === "development";
   const rpc = process.env.NEXT_PUBLIC_RPC_URL ?? "";
