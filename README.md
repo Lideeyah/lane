@@ -7,6 +7,24 @@ transfers to per-till accounts on Monad. No wallet, no server that can move mone
 Spec documents: the four `lane-*-2026-10-08.md` briefs (design, end-to-end flow,
 landing page, technical architecture).
 
+## Live on Monad testnet
+
+- App: https://lane-mu.vercel.app
+- TillRegistry: `0xc4C275cA0E095aA7C6012C426E08f9bE27e718DB` (chain 10143)
+- Token: Circle test USDC `0x534b2f3A21130d7a60830c2Df862319e593943A3`, verified on chain (USDC, 6 decimals)
+- Redeploy with `scripts/deploy-testnet.sh`. The treasury key is added to Vercel by hand, never by script.
+
+Measured on testnet, 8 Oct 2026, at about 103 gwei:
+
+| Step | Gas | MON |
+|---|---|---|
+| Gas drip | 21,000 | 0.0022 |
+| Register a till | 71,625 | 0.0074 |
+| Customer pays USDC | 100,504 | 0.0104 |
+| Sweep a till | 100,516 | 0.0103 |
+
+The node at `wss://testnet-rpc.monad.xyz` serves live subscriptions.
+
 ## Layout
 
 | Path | What |
@@ -64,4 +82,4 @@ queue, and a refund from the main account.
 - The staff pairing code is a QR code and a link, not a short typed code. A short code would need a lookup server, and the architecture has none.
 - Sale references live on the phone that took the sale. A restored phone shows those sales as plain payments.
 - The treasury rate limiter is in memory, so it resets per server instance.
-- PRF on real phones, mainnet transfer cost and websocket availability on the chosen node still need checking on hardware (architecture §13).
+- PRF on real phones still needs checking on hardware, and mainnet costs need measuring before launch (architecture §13).
