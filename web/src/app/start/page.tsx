@@ -198,9 +198,14 @@ export default function Start() {
           {step.s === "dismissed" || step.s === "error" ? "Try again" : "Start"}
         </button>
         {step.s === "open" && (
-          <button className="btn btn-text" onClick={() => setStep({ s: "restore" })}>
-            I already have a shop
-          </button>
+          <>
+            <button className="btn btn-text" onClick={() => setStep({ s: "restore" })}>
+              I already have a shop
+            </button>
+            <button className="btn btn-text" onClick={() => router.push("/staff")}>
+              Join a shop as staff
+            </button>
+          </>
         )}
       </div>
     </main>
