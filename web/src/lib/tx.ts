@@ -10,6 +10,31 @@ import type { SigningSession } from "./accounts";
  * §5). The limit is the estimate for this exact call, never a padded number.
  */
 
+/**
+ * The reserve rule (architecture §6): an account under the 10 MON reserve may
+ * only send if it sent nothing in the previous three blocks, about 1.2 seconds.
+ * Lane's accounts hold dust, so consecutive sends from one sender are spaced.
+ */
+const SAME_SENDER_GAP_MS = 1600;
+const lastSendAt = new Map<string, number>();
+const senderChain = new Map<string, Promise<unknown>>();
+
+export function paced<T>(sender: Address, fn: () => Promise<T>): Promise<T> {
+  const key = sender.toLowerCase();
+  const run = async () => {
+    const wait = (lastSendAt.get(key) ?? 0) + SAME_SENDER_GAP_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    try {
+      return await fn();
+    } finally {
+      lastSendAt.set(key, Date.now());
+    }
+  };
+  const next = (senderChain.get(key) ?? Promise.resolve()).then(run, run);
+  senderChain.set(key, next.catch(() => undefined));
+  return next;
+}
+
 function wallet(account: HDAccount) {
   return createWalletClient({ account, chain: config.chain, transport: http(config.rpcUrl) });
 }
@@ -42,7 +67,11 @@ export async function ensureGas(address: Address): Promise<void> {
   if (res.hash) await client.waitForTransactionReceipt({ hash: res.hash, timeout: 60_000 });
 }
 
-export async function sendToken(from: HDAccount, to: Address, amount: bigint, token: Address = config.token.address): Promise<Hash> {
+export function sendToken(from: HDAccount, to: Address, amount: bigint, token: Address = config.token.address): Promise<Hash> {
+  return paced(from.address, () => sendTokenNow(from, to, amount, token));
+}
+
+async function sendTokenNow(from: HDAccount, to: Address, amount: bigint, token: Address): Promise<Hash> {
   const client = publicClient();
   const gas = await client.estimateContractGas({
     address: token,
@@ -63,8 +92,12 @@ export async function sendToken(from: HDAccount, to: Address, amount: bigint, to
 }
 
 export async function registerTillOnChain(owner: HDAccount, till: Address, label: string): Promise<Hash> {
-  const client = publicClient();
   await ensureGas(owner.address);
+  return paced(owner.address, () => registerNow(owner, till, label));
+}
+
+async function registerNow(owner: HDAccount, till: Address, label: string): Promise<Hash> {
+  const client = publicClient();
   const gas = await client.estimateContractGas({
     address: config.registryAddress,
     abi: registryAbi,
@@ -84,8 +117,12 @@ export async function registerTillOnChain(owner: HDAccount, till: Address, label
 }
 
 export async function relabelTillOnChain(owner: HDAccount, till: Address, label: string): Promise<Hash> {
-  const client = publicClient();
   await ensureGas(owner.address);
+  return paced(owner.address, () => relabelNow(owner, till, label));
+}
+
+async function relabelNow(owner: HDAccount, till: Address, label: string): Promise<Hash> {
+  const client = publicClient();
   const gas = await client.estimateContractGas({ address: config.registryAddress, abi: registryAbi, functionName: "relabelTill", args: [till, label], account: owner });
   const hash = await wallet(owner).writeContract({ address: config.registryAddress, abi: registryAbi, functionName: "relabelTill", args: [till, label], gas });
   await waitFor(hash);

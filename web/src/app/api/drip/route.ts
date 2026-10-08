@@ -89,6 +89,8 @@ export async function POST(req: Request) {
       // A native transfer costs exactly 21000 gas: the one case where the limit is known, not estimated.
       const hash = await t.wallet.sendTransaction({ to: address as Address, value: DRIP_AMOUNT, gas: 21_000n });
       await t.pub.waitForTransactionReceipt({ hash, timeout: 45_000 });
+      // Reserve rule: if the treasury is under the reserve, keep three blocks between its sends.
+      if (treasuryBalance < parseEther("10")) await new Promise((r) => setTimeout(r, 1600));
       return { hash };
     });
     return NextResponse.json({ ok: true, ...result });
