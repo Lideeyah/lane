@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createPublicClient, createWalletClient, http, isAddress, parseEther, type Address, type Hash } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { config } from "@/lib/chain";
+import { allow, redis } from "@/lib/server/redis";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -76,7 +77,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Bad address" }, { status: 400 });
   }
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
-  if (!take(perIp, ip, MAX_PER_IP_PER_HOUR) || !take(perAddress, address.toLowerCase(), MAX_PER_ADDRESS_PER_HOUR)) {
+  // Shared counters when the store is configured, so limits hold across server instances.
+  const allowed = redis()
+    ? (await allow(`drip:ip:${ip}`, MAX_PER_IP_PER_HOUR, 3600)) && (await allow(`drip:addr:${address.toLowerCase()}`, MAX_PER_ADDRESS_PER_HOUR, 3600))
+    : take(perIp, ip, MAX_PER_IP_PER_HOUR) && take(perAddress, address.toLowerCase(), MAX_PER_ADDRESS_PER_HOUR);
+  if (!allowed) {
     return NextResponse.json({ ok: false, error: "Too many requests, try again later" }, { status: 429 });
   }
 
