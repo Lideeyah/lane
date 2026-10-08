@@ -1,0 +1,25 @@
+# Envio indexer for Lane. Indexes registry events (which tills belong to whom)
+# and token transfers whose recipient or sender is a registered till.
+# Run: pnpm dlx envio dev   (see https://docs.envio.dev)
+name: lane
+networks:
+  - id: 143
+    start_block: 0
+    contracts:
+      - name: TillRegistry
+        address:
+          - "0x0000000000000000000000000000000000000000" # set after deployment
+        handler: src/EventHandlers.ts
+        events:
+          - event: TillRegistered(address indexed owner, address indexed till, string label)
+          - event: TillRelabelled(address indexed owner, address indexed till, string label)
+          - event: TillRetired(address indexed owner, address indexed till)
+      - name: Token
+        address:
+          - "0x0000000000000000000000000000000000000000" # the verified stablecoin address
+        handler: src/EventHandlers.ts
+        events:
+          - event: Transfer(address indexed from, address indexed to, uint256 value)
+field_selection:
+  transaction_fields:
+    - hash

@@ -1,0 +1,20 @@
+type Till {
+  id: ID! # till address, lowercase
+  owner: String!
+  label: String!
+  retired: Boolean!
+  registeredAt: BigInt!
+}
+
+type Transfer {
+  id: ID! # txHash:logIndex
+  txHash: String!
+  from: String!
+  to: String!
+  value: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  # The till involved (recipient for a sale, sender for a refund or sweep).
+  till: String!
+  owner: String!
+}
