@@ -20,3 +20,6 @@ web/.env.local
 
 # editor
 .DS_Store
+
+# local secrets
+.secrets/
