@@ -80,8 +80,3 @@ queue, and a refund from the main account.
 ## Staff pairing
 
 The owner taps Hand to staff and sees a six-digit code. The staff member types it at `/staff`. Codes live in Upstash Redis (Vercel Marketplace) for ten minutes and work once; redemption is limited to 10 tries per network address per ten minutes. The store holds only the till's public address and two labels, never key material, so the claim that no server can move money still holds. The QR code and link remain as a fallback when the store is unavailable. The same store holds the treasury's rate limits.
-
-## Known limits
-
-- Sale references live on the phone that took the sale. A restored phone shows those sales as plain payments.
-- PRF on real phones still needs checking on hardware, and mainnet costs need measuring before launch (architecture §13).
