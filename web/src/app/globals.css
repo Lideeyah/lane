@@ -91,7 +91,7 @@ p { margin: 0; }
 /* ---------- lists ---------- */
 .list { display: flex; flex-direction: column; }
 .list-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 4px; border-bottom: 1px solid var(--clay); background: transparent; border-left: 0; border-right: 0; border-top: 0; width: 100%; text-align: left; cursor: pointer; font: inherit; }
-.list-row.selected { background: var(--selected); margin: 0 calc(-1 * var(--gutter)); width: calc(100% + 2 * var(--gutter)); padding-left: var(--gutter); padding-right: var(--gutter); }
+.list-row.selected { background: var(--selected); box-shadow: 0 0 0 0 var(--selected), calc(-1 * var(--gutter)) 0 0 0 var(--selected), var(--gutter) 0 0 0 var(--selected); }
 .list-row.static { cursor: default; }
 
 /* ---------- tabs ---------- */
