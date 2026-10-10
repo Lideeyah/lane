@@ -102,3 +102,34 @@ export function socketClient(): PublicClient | undefined {
 export function explorerTx(hash: string): string | undefined {
   return config.explorerUrl ? `${config.explorerUrl}/tx/${hash}` : undefined;
 }
+
+/**
+ * Public Monad endpoints cap a log query at about 100 blocks (40 seconds of
+ * chain time). Every history read goes through `inChunks`, which splits a range
+ * into allowed spans and runs a few at a time. A paid endpoint or the local chain
+ * can raise the span with NEXT_PUBLIC_LOG_SPAN.
+ */
+export const LOG_SPAN = BigInt(process.env.NEXT_PUBLIC_LOG_SPAN || (chainKey === "local" ? "100000" : "100"));
+/** How far back a device looks on its own when it opens: about 20 minutes on Monad. */
+export const RECENT_BLOCKS = BigInt(process.env.NEXT_PUBLIC_RECENT_BLOCKS || "3000");
+
+export async function inChunks<T>(from: bigint, to: bigint, fetch: (from: bigint, to: bigint) => Promise<T[]>, concurrency = 4): Promise<T[]> {
+  if (from > to) return [];
+  const ranges: [bigint, bigint][] = [];
+  for (let a = from; a <= to; a += LOG_SPAN) ranges.push([a, a + LOG_SPAN - 1n < to ? a + LOG_SPAN - 1n : to]);
+  const out: T[][] = new Array(ranges.length);
+  let next = 0;
+  async function worker() {
+    while (next < ranges.length) {
+      const i = next++;
+      const [a, b] = ranges[i];
+      try {
+        out[i] = await fetch(a, b);
+      } catch {
+        out[i] = await fetch(a, b); // one retry; a second failure propagates
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, ranges.length) }, worker));
+  return out.flat();
+}

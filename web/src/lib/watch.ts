@@ -1,6 +1,6 @@
 import type { Address, Log } from "viem";
 import { erc20Abi } from "./abi";
-import { config, publicClient, socketClient } from "./chain";
+import { config, inChunks, publicClient, RECENT_BLOCKS, socketClient } from "./chain";
 
 export interface IncomingTransfer {
   txHash: `0x${string}`;
@@ -75,24 +75,28 @@ export function watchTransfers(opts: {
     }
   }
 
-  /** Replay anything missed since the last block seen. */
+  /** Replay anything missed since the last block seen, in spans the endpoint accepts. */
   async function catchUp() {
+    let head: bigint;
     try {
-      const head = await http.getBlockNumber();
-      const from = lastBlock !== undefined ? lastBlock + 1n : head > 2000n ? head - 2000n : 0n;
-      if (from > head) return;
-      const logs = await http.getContractEvents({
-        address: token,
-        abi: erc20Abi,
-        eventName: "Transfer",
-        args: { to: opts.till },
-        fromBlock: from,
-        toBlock: head,
-      });
+      head = await http.getBlockNumber();
+    } catch {
+      // Only an unreachable network counts as offline; a slow history read does not.
+      setStatus("offline");
+      return;
+    }
+    if (status === "offline") setStatus(socketClient() ? "live" : "polling");
+    const floor = head > RECENT_BLOCKS ? head - RECENT_BLOCKS : 0n;
+    const from = lastBlock !== undefined && lastBlock + 1n > floor ? lastBlock + 1n : floor;
+    if (from > head) return;
+    try {
+      const logs = await inChunks(from, head, (a, b) =>
+        http.getContractEvents({ address: token, abi: erc20Abi, eventName: "Transfer", args: { to: opts.till }, fromBlock: a, toBlock: b }),
+      );
       await handle(logs as Log[]);
       if (lastBlock === undefined || head > lastBlock) lastBlock = head;
     } catch {
-      setStatus("offline");
+      /* try again on the next interval; live payments still arrive over the subscription */
     }
   }
 
@@ -110,7 +114,9 @@ export function watchTransfers(opts: {
         setStatus("polling");
         void handle(logs as Log[]);
       },
-      onError: () => setStatus("offline"),
+      onError: () => {
+        /* a failed poll is retried by the next one and by catch-up */
+      },
     });
   }
 
