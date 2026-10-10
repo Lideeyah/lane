@@ -2,7 +2,7 @@
 import type { Address } from "viem";
 import { deriveAccount, mnemonicFromSecret, OWNER_INDEX, withSigner, type SigningSession } from "./accounts";
 import { requestDrip } from "./drip-client";
-import { registeredTills } from "./ledger";
+import { tillsFromRegistry } from "./ledger";
 import { assertPrfDiscoverable, createPasskey } from "./passkey";
 import { shopStore, type Shop, type Till } from "./storage";
 import { registerTillOnChain, relabelTillOnChain, describe } from "./tx";
@@ -86,21 +86,23 @@ export async function restoreShop(name: string): Promise<Shop> {
   try {
     const mnemonic = mnemonicFromSecret(secret);
     const owner = deriveAccount(mnemonic, OWNER_INDEX).address;
-    let onChain: { address: Address; label: string; retired: boolean }[] = [];
+    // Derive candidate tills and ask the registry about each one directly.
+    const SCAN = 30;
+    const candidates = Array.from({ length: SCAN }, (_, i) => deriveAccount(mnemonic, i + 1).address);
+    let onChain: Awaited<ReturnType<typeof tillsFromRegistry>> = [];
     try {
-      onChain = await registeredTills(owner);
+      onChain = (await tillsFromRegistry(candidates)).filter((t) => t.owner.toLowerCase() === owner.toLowerCase());
     } catch {
-      /* offline: Till 1 alone, registry is reread later */
+      /* offline: Till 1 alone, the registry is reread on the next signed action */
     }
-    const want = new Map(onChain.map((t) => [t.address.toLowerCase(), t]));
+    const found = new Map(onChain.map((t) => [t.address.toLowerCase(), t]));
     const tills: Till_[] = [];
-    const scan = Math.max(20, onChain.length + 10);
-    for (let i = 1; i <= scan; i++) {
-      const addr = deriveAccount(mnemonic, i).address;
-      const hit = want.get(addr.toLowerCase());
-      if (hit && !hit.retired) tills.push({ index: i, address: addr, label: hit.label || `Till ${i}`, registered: true, chainLabel: hit.label });
-      else if (i === 1 && !hit) tills.push({ index: 1, address: addr, label: "Till 1", registered: false });
-    }
+    candidates.forEach((addr, i) => {
+      const index = i + 1;
+      const hit = found.get(addr.toLowerCase());
+      if (hit && !hit.retired) tills.push({ index, address: addr, label: hit.label || `Till ${index}`, registered: true, chainLabel: hit.label });
+      else if (index === 1 && !hit) tills.push({ index: 1, address: addr, label: "Till 1", registered: false });
+    });
     const shop: Shop = { version: 1, credentialId, owner, name: name.trim(), tills, createdAt: Date.now() };
     shopStore.set(shop);
     return shop;

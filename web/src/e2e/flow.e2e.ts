@@ -9,7 +9,7 @@ import { erc20Abi } from "@/lib/abi";
 import { deriveAccount, mnemonicFromSecret, type SigningSession } from "@/lib/accounts";
 import { config, publicClient } from "@/lib/chain";
 import { requestDrip } from "@/lib/drip-client";
-import { loadLedger, readBalances, registeredTills } from "@/lib/ledger";
+import { loadLedger, readBalances, tillsFromRegistry } from "@/lib/ledger";
 import { planRefund, refund, registerTillOnChain, sweepTills } from "@/lib/tx";
 import { startOfToday } from "@/lib/format";
 
@@ -39,8 +39,9 @@ describe("Lane money path", () => {
 
   it("registers the first till against the owner", async () => {
     await registerTillOnChain(owner, till.address, "Till 1");
-    const tills = await registeredTills(owner.address);
-    expect(tills.map((t) => t.address)).toContain(till.address);
+    const [found] = await tillsFromRegistry([till.address]);
+    expect(found.owner).toBe(owner.address);
+    expect(found.label).toBe("Till 1");
   });
 
   it("receives a customer payment into the till with no signature from the merchant", async () => {
