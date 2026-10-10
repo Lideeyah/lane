@@ -12,6 +12,8 @@ import { useShop } from "@/lib/hooks";
 import type { LedgerEntry } from "@/lib/ledger";
 import { getActiveTill } from "@/lib/shop";
 import { useLedger } from "@/lib/useLedger";
+import { salesStore } from "@/lib/storage";
+import { watchTransfers } from "@/lib/watch";
 
 type Tab = "till" | "tills" | "ledger" | "settings";
 
@@ -31,6 +33,24 @@ export default function TillHome() {
   }, [ready, shop, router]);
 
   const tillAddrs = useMemo(() => shop?.tills.map((t) => t.address) ?? [], [shop]);
+
+  // Record sales into every till as they land, not just the one on screen, so the
+  // ledger has them even after they fall outside what a public endpoint can replay.
+  const activeAddr = shop ? getActiveTill(shop).address : undefined;
+  const others = useMemo(() => tillAddrs.filter((a) => a !== activeAddr).join(","), [tillAddrs, activeAddr]);
+  useEffect(() => {
+    if (!others) return;
+    const stops = others.split(",").map((till) =>
+      watchTransfers({
+        till: till as `0x${string}`,
+        onTransfer: (t) => {
+          const id = `${t.txHash}:${t.logIndex}`;
+          if (!salesStore.get(id)) salesStore.put({ id, txHash: t.txHash, till: t.to, payer: t.from, amount: t.amount.toString(), time: t.time, kind: "direct" });
+        },
+      }),
+    );
+    return () => stops.forEach((s) => s());
+  }, [others]);
   const ledger = useLedger(tillAddrs, shop?.owner);
 
   if (!shop || !shop.name) return <main className="screen" />;

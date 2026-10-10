@@ -1,6 +1,6 @@
 import type { Address } from "viem";
 import { erc20Abi, registryAbi } from "./abi";
-import { config, publicClient } from "./chain";
+import { config, inChunks, publicClient, RECENT_BLOCKS } from "./chain";
 import { salesStore, type MatchKind, type SaleRecord } from "./storage";
 
 /**
@@ -71,68 +71,66 @@ async function blockTimestamp(n: bigint): Promise<number> {
   return t;
 }
 
-/** Binary search for the first block at or after `timeMs`. */
-export async function blockAtOrAfter(timeMs: number): Promise<bigint> {
-  const client = publicClient();
-  let hi = await client.getBlockNumber();
-  let lo = 0n;
-  if ((await blockTimestamp(hi)) < timeMs) return hi + 1n;
-  if ((await blockTimestamp(lo)) >= timeMs) return 0n;
-  while (hi - lo > 1n) {
-    const mid = (lo + hi) / 2n;
-    if ((await blockTimestamp(mid)) >= timeMs) hi = mid;
-    else lo = mid;
-  }
-  return hi;
-}
-
+/**
+ * Ledger lines from two sources: transfers this device has already seen (the
+ * watcher records each one as it lands), and a scan of recent blocks to fill any
+ * gap while the app was closed. Public endpoints cannot serve a whole day of logs,
+ * so older lines come from this device or the indexer; balances always come from
+ * the chain, so what the merchant holds is never in doubt.
+ */
 async function fromChain(tills: Address[], owner: Address | undefined, sinceMs: number): Promise<LedgerEntry[]> {
   const client = publicClient();
-  const fromBlock = await blockAtOrAfter(sinceMs);
   const toBlock = await client.getBlockNumber();
-  if (fromBlock > toBlock) return [];
+  const fromBlock = toBlock > RECENT_BLOCKS ? toBlock - RECENT_BLOCKS : 0n;
   const senders = owner ? [...tills, owner] : tills;
   const [inLogs, outLogs] = await Promise.all([
-    client.getContractEvents({ address: config.token.address, abi: erc20Abi, eventName: "Transfer", args: { to: tills }, fromBlock, toBlock }),
-    client.getContractEvents({ address: config.token.address, abi: erc20Abi, eventName: "Transfer", args: { from: senders }, fromBlock, toBlock }),
+    inChunks(fromBlock, toBlock, (a, b) => client.getContractEvents({ address: config.token.address, abi: erc20Abi, eventName: "Transfer", args: { to: tills }, fromBlock: a, toBlock: b })),
+    inChunks(fromBlock, toBlock, (a, b) => client.getContractEvents({ address: config.token.address, abi: erc20Abi, eventName: "Transfer", args: { from: senders }, fromBlock: a, toBlock: b })),
   ]);
   const local = salesStore.all();
-  const entries: LedgerEntry[] = [];
+  const entries = new Map<string, LedgerEntry>();
   const blocks = new Set<bigint>();
   for (const l of [...inLogs, ...outLogs]) if (l.blockNumber != null) blocks.add(l.blockNumber);
   await Promise.all([...blocks].map((b) => blockTimestamp(b).catch(() => undefined)));
 
   const tillSet = new Set(tills.map((t) => t.toLowerCase()));
+  const ownerLower = owner?.toLowerCase();
   for (const l of inLogs) {
     if (!l.transactionHash || l.logIndex == null || l.blockNumber == null || !l.args.from || !l.args.to || l.args.value == null) continue;
-    // A sweep is a till paying the owner, which is also a transfer *from* a till; skip till→till/owner here.
-    if (tillSet.has(l.args.from.toLowerCase()) || (owner && l.args.from.toLowerCase() === owner.toLowerCase())) continue;
+    // A sweep is a till paying the owner; only money from outside is a sale.
+    if (tillSet.has(l.args.from.toLowerCase()) || l.args.from.toLowerCase() === ownerLower) continue;
     const id = `${l.transactionHash}:${l.logIndex}`;
-    entries.push(
-      enrich(
-        { id, txHash: l.transactionHash, till: l.args.to, counterparty: l.args.from, amount: l.args.value, time: blockTimeCache.get(l.blockNumber) ?? Date.now() },
-        local[id],
-        "direct",
-      ),
-    );
+    entries.set(id, enrich({ id, txHash: l.transactionHash, till: l.args.to, counterparty: l.args.from, amount: l.args.value, time: blockTimeCache.get(l.blockNumber) ?? Date.now() }, local[id], "direct"));
   }
   for (const l of outLogs) {
     if (!l.transactionHash || l.logIndex == null || l.blockNumber == null || !l.args.from || !l.args.to || l.args.value == null) continue;
     const toLower = l.args.to.toLowerCase();
     // Sweeps (till → owner) are not ledger lines; refunds (→ a customer) are.
-    if (owner && toLower === owner.toLowerCase()) continue;
-    if (tillSet.has(toLower)) continue;
+    if (toLower === ownerLower || tillSet.has(toLower)) continue;
     const id = `${l.transactionHash}:${l.logIndex}`;
-    entries.push(
-      enrich(
-        { id, txHash: l.transactionHash, till: l.args.from, counterparty: l.args.to, amount: -l.args.value, time: blockTimeCache.get(l.blockNumber) ?? Date.now() },
-        local[id],
-        "refund",
-      ),
-    );
+    entries.set(id, enrich({ id, txHash: l.transactionHash, till: l.args.from, counterparty: l.args.to, amount: -l.args.value, time: blockTimeCache.get(l.blockNumber) ?? Date.now() }, local[id], "refund"));
   }
-  entries.sort((a, b) => b.time - a.time || (a.id < b.id ? 1 : -1));
-  return entries;
+
+  // Lines this device recorded earlier than the scan window.
+  const mine = new Set(senders.map((a) => a.toLowerCase()));
+  for (const r of Object.values(local)) {
+    if (entries.has(r.id) || r.time < sinceMs || !mine.has(r.till.toLowerCase())) continue;
+    const amount = BigInt(r.amount);
+    entries.set(r.id, {
+      id: r.id,
+      txHash: r.txHash,
+      till: r.till,
+      counterparty: r.payer,
+      amount,
+      time: r.time,
+      kind: r.kind,
+      reference: r.reference,
+      requestId: r.requestId,
+      requestedAmount: r.requestedAmount ? BigInt(r.requestedAmount) : undefined,
+      refundOf: r.refundOf,
+    });
+  }
+  return [...entries.values()].filter((e) => e.time >= sinceMs).sort((a, b) => b.time - a.time || (a.id < b.id ? 1 : -1));
 }
 
 /* ---------- indexer (Envio GraphQL) ---------- */
@@ -206,25 +204,21 @@ export async function loadLedger(tills: Address[], owner: Address | undefined, s
   }
 }
 
-/** Tills registered on chain by this owner, for restoring on a new device. */
-export async function registeredTills(owner: Address): Promise<{ address: Address; label: string; retired: boolean }[]> {
+/**
+ * Whether each candidate till is registered, read straight from the registry's
+ * storage rather than its event history, which public endpoints cannot serve in
+ * one query. Used to restore a shop on a new device.
+ */
+export async function tillsFromRegistry(candidates: Address[]): Promise<{ address: Address; owner: Address; label: string; retired: boolean }[]> {
   const client = publicClient();
-  const [reg, relabel, retired] = await Promise.all([
-    client.getContractEvents({ address: config.registryAddress, abi: registryAbi, eventName: "TillRegistered", args: { owner }, fromBlock: 0n }),
-    client.getContractEvents({ address: config.registryAddress, abi: registryAbi, eventName: "TillRelabelled", args: { owner }, fromBlock: 0n }),
-    client.getContractEvents({ address: config.registryAddress, abi: registryAbi, eventName: "TillRetired", args: { owner }, fromBlock: 0n }),
-  ]);
-  const map = new Map<string, { address: Address; label: string; retired: boolean }>();
-  for (const l of reg) if (l.args.till) map.set(l.args.till.toLowerCase(), { address: l.args.till, label: l.args.label ?? "", retired: false });
-  for (const l of relabel) {
-    const t = l.args.till && map.get(l.args.till.toLowerCase());
-    if (t && l.args.label != null) t.label = l.args.label;
-  }
-  for (const l of retired) {
-    const t = l.args.till && map.get(l.args.till.toLowerCase());
-    if (t) t.retired = true;
-  }
-  return [...map.values()];
+  const rows = await Promise.all(
+    candidates.map((till) =>
+      client
+        .readContract({ address: config.registryAddress, abi: registryAbi, functionName: "tillOf", args: [till] })
+        .then(([owner, label, retired]) => ({ address: till, owner, label, retired })),
+    ),
+  );
+  return rows.filter((r) => r.owner !== "0x0000000000000000000000000000000000000000");
 }
 
 /* ---------- unrecognised tokens (flow §4.11) ---------- */
@@ -237,7 +231,6 @@ export interface OtherToken {
   balances: Record<Address, bigint>;
 }
 
-const OTHER_LOOKBACK_BLOCKS = 50_000n;
 
 /**
  * Any ERC-20 other than the shop's token that has arrived at a till. Found from
@@ -248,14 +241,16 @@ export async function otherTokens(tills: Address[]): Promise<OtherToken[]> {
   if (!tills.length) return [];
   const client = publicClient();
   const head = await client.getBlockNumber();
-  const fromBlock = head > OTHER_LOOKBACK_BLOCKS ? head - OTHER_LOOKBACK_BLOCKS : 0n;
-  const logs = await client.getLogs({
-    event: erc20Abi[0],
-    args: { to: tills },
-    fromBlock,
-    toBlock: head,
-    strict: true, // skips ERC-721 transfers, whose value is indexed
-  });
+  const fromBlock = head > RECENT_BLOCKS ? head - RECENT_BLOCKS : 0n;
+  const logs = await inChunks(fromBlock, head, (a, b) =>
+    client.getLogs({
+      event: erc20Abi[0],
+      args: { to: tills },
+      fromBlock: a,
+      toBlock: b,
+      strict: true, // skips ERC-721 transfers, whose value is indexed
+    }),
+  );
   const main = config.token.address.toLowerCase();
   const tokens = [...new Set(logs.map((l) => l.address.toLowerCase()))].filter((t) => t !== main) as Address[];
   const out: OtherToken[] = [];
