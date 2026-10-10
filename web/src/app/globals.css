@@ -151,3 +151,12 @@ p { margin: 0; }
   .statements { grid-template-columns: repeat(3, 1fr); }
   .proof { grid-template-columns: 1fr 1fr; align-items: center; }
 }
+
+/* ---------- touch feedback ---------- */
+.btn, .pad button, .list-row, .seg button, .tabs button { transition: transform 90ms ease-out, background-color 90ms ease-out, filter 90ms ease-out; -webkit-tap-highlight-color: transparent; }
+.btn:active:not(:disabled) { transform: scale(0.985); }
+.btn-ink:active:not(:disabled) { filter: brightness(1.35); }
+.btn-outline:active:not(:disabled), .btn-text:active { background: rgba(20, 17, 14, 0.06); }
+.list-row:active { background: var(--selected); }
+.seg button:active, .tabs button:active { background: rgba(20, 17, 14, 0.06); }
+@media (prefers-reduced-motion: reduce) { .btn:active:not(:disabled) { transform: none; } }
