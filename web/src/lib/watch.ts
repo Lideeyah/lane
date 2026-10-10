@@ -70,7 +70,9 @@ export function watchTransfers(opts: {
         to: args.to,
         amount: args.value,
         blockNumber: log.blockNumber,
-        time: await blockTime(log.blockNumber),
+        // Don't hold a live payment back for a block lookup: use the block's time if it
+        // arrives quickly, otherwise this phone's clock, which is within a second of it.
+        time: await Promise.race([blockTime(log.blockNumber), new Promise<number>((r) => setTimeout(() => r(Date.now()), 250))]),
       });
     }
   }

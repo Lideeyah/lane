@@ -112,7 +112,7 @@ export default function Pay() {
       } catch {
         /* offline: keep trying, the payment lands regardless (flow §4.7) */
       }
-      if (!stop) setTimeout(tick, 1200);
+      if (!stop) setTimeout(tick, 500);
     };
     void tick();
     return () => {
