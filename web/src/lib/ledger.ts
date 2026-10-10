@@ -78,15 +78,30 @@ async function blockTimestamp(n: bigint): Promise<number> {
  * so older lines come from this device or the indexer; balances always come from
  * the chain, so what the merchant holds is never in doubt.
  */
+type TransferLog = Awaited<ReturnType<typeof scanTransfers>>[number];
+
+function scanTransfers(args: { to: Address[] } | { from: Address[] }, fromBlock: bigint, toBlock: bigint) {
+  const client = publicClient();
+  return inChunks(fromBlock, toBlock, (a, b) =>
+    client.getContractEvents({ address: config.token.address, abi: erc20Abi, eventName: "Transfer", args, fromBlock: a, toBlock: b }),
+  );
+}
+
+/** Per till set: the last block scanned and what it held, so each refresh only reads new blocks. */
+const scanCache = new Map<string, { toBlock: bigint; inLogs: TransferLog[]; outLogs: TransferLog[] }>();
+
 async function fromChain(tills: Address[], owner: Address | undefined, sinceMs: number): Promise<LedgerEntry[]> {
   const client = publicClient();
   const toBlock = await client.getBlockNumber();
-  const fromBlock = toBlock > RECENT_BLOCKS ? toBlock - RECENT_BLOCKS : 0n;
+  const floor = toBlock > RECENT_BLOCKS ? toBlock - RECENT_BLOCKS : 0n;
   const senders = owner ? [...tills, owner] : tills;
-  const [inLogs, outLogs] = await Promise.all([
-    inChunks(fromBlock, toBlock, (a, b) => client.getContractEvents({ address: config.token.address, abi: erc20Abi, eventName: "Transfer", args: { to: tills }, fromBlock: a, toBlock: b })),
-    inChunks(fromBlock, toBlock, (a, b) => client.getContractEvents({ address: config.token.address, abi: erc20Abi, eventName: "Transfer", args: { from: senders }, fromBlock: a, toBlock: b })),
-  ]);
+  const key = [...senders].map((a) => a.toLowerCase()).sort().join(",");
+  const cached = scanCache.get(key);
+  const fromBlock = cached && cached.toBlock + 1n > floor ? cached.toBlock + 1n : floor;
+  const [newIn, newOut] = await Promise.all([scanTransfers({ to: tills }, fromBlock, toBlock), scanTransfers({ from: senders }, fromBlock, toBlock)]);
+  const inLogs = [...(cached && fromBlock !== floor ? cached.inLogs : []), ...newIn];
+  const outLogs = [...(cached && fromBlock !== floor ? cached.outLogs : []), ...newOut];
+  scanCache.set(key, { toBlock, inLogs, outLogs });
   const local = salesStore.all();
   const entries = new Map<string, LedgerEntry>();
   const blocks = new Set<bigint>();

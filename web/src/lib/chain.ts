@@ -110,8 +110,8 @@ export function explorerTx(hash: string): string | undefined {
  * can raise the span with NEXT_PUBLIC_LOG_SPAN.
  */
 export const LOG_SPAN = BigInt(process.env.NEXT_PUBLIC_LOG_SPAN || (chainKey === "local" ? "100000" : "100"));
-/** How far back a device looks on its own when it opens: about 20 minutes on Monad. */
-export const RECENT_BLOCKS = BigInt(process.env.NEXT_PUBLIC_RECENT_BLOCKS || "3000");
+/** How far back a device looks on its own when it opens: about 10 minutes on Monad. */
+export const RECENT_BLOCKS = BigInt(process.env.NEXT_PUBLIC_RECENT_BLOCKS || "1500");
 
 export async function inChunks<T>(from: bigint, to: bigint, fetch: (from: bigint, to: bigint) => Promise<T[]>, concurrency = 4): Promise<T[]> {
   if (from > to) return [];
@@ -126,7 +126,8 @@ export async function inChunks<T>(from: bigint, to: bigint, fetch: (from: bigint
       try {
         out[i] = await fetch(a, b);
       } catch {
-        out[i] = await fetch(a, b); // one retry; a second failure propagates
+        await new Promise((r) => setTimeout(r, 400)); // public endpoints rate limit; back off once
+        out[i] = await fetch(a, b); // a second failure propagates
       }
     }
   }
