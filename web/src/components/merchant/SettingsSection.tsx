@@ -3,12 +3,16 @@ import { useState } from "react";
 import { Band, Field } from "../ui";
 import { withSigner } from "@/lib/accounts";
 import { PasskeyError } from "@/lib/passkey";
-import { shopStore, type Shop } from "@/lib/storage";
+import { backUpRecords, restoreRecords } from "@/lib/backup";
+import { backupStore, shopStore, type Shop } from "@/lib/storage";
 
 export function SettingsSection({ shop, onTills }: { shop: Shop; onTills: () => void }) {
   const [name, setName] = useState(shop.name);
   const [recovery, setRecovery] = useState(false);
+  const [backup, setBackup] = useState(false);
   if (recovery) return <Recovery shop={shop} onBack={() => setRecovery(false)} />;
+  if (backup) return <Backup shop={shop} onBack={() => setBackup(false)} />;
+  const savedAt = backupStore.get()?.savedAt;
   return (
     <div className="stack" style={{ gap: 20 }}>
       <h2>Settings</h2>
@@ -29,6 +33,10 @@ export function SettingsSection({ shop, onTills }: { shop: Shop; onTills: () => 
         <button className="list-row" onClick={() => setRecovery(true)}>
           <span>Recovery phrase</span>
           <span className="muted small">{shop.recoveryShownAt ? "Saved" : "Not saved yet"}</span>
+        </button>
+        <button className="list-row" onClick={() => setBackup(true)}>
+          <span>Records backup</span>
+          <span className="muted small">{savedAt ? `Backed up ${when(savedAt)}` : "Not backed up yet"}</span>
         </button>
       </div>
     </div>
@@ -83,6 +91,69 @@ export function Recovery({ shop, onBack }: { shop: Shop; onBack: () => void }) {
         <button className="btn btn-primary btn-xl" onClick={reveal}>
           Show recovery phrase
         </button>
+      )}
+      {err && (
+        <Band kind="error">
+          <p>{err}</p>
+        </Band>
+      )}
+    </div>
+  );
+}
+
+function when(t: number): string {
+  const d = new Date(t);
+  const today = new Date().toDateString() === d.toDateString();
+  return today
+    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString([], { day: "numeric", month: "short" });
+}
+
+export function Backup({ shop, onBack }: { shop: Shop; onBack: () => void }) {
+  const [busy, setBusy] = useState<"backup" | "restore" | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function run(kind: "backup" | "restore") {
+    setErr(null);
+    setDone(null);
+    setBusy(kind);
+    try {
+      if (kind === "backup") {
+        const r = await backUpRecords(shop);
+        setDone(`Backed up ${r.sales} ${r.sales === 1 ? "record" : "records"}, encrypted with your passkey.`);
+      } else {
+        const r = await restoreRecords(shop);
+        setDone(r ? `Restored ${r.sales} ${r.sales === 1 ? "record" : "records"} from ${when(r.savedAt)}.` : "There is no backup for this passkey yet.");
+      }
+    } catch (e) {
+      if (!(e instanceof PasskeyError && e.kind === "dismissed")) setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="stack" style={{ gap: 20 }}>
+      <button className="btn btn-text" style={{ justifyContent: "flex-start", padding: 0, width: "auto" }} onClick={onBack}>
+        Back
+      </button>
+      <h2>Records backup</h2>
+      <div className="stack" style={{ gap: 10 }}>
+        <p>Every payment is on Monad. What was sold, and which payment matched which request, is only on this phone.</p>
+        <p>Back it up with your fingerprint. It is encrypted on this phone with a key from your passkey, so Lane keeps a copy it cannot read.</p>
+        <p>On a new phone, sign in with the same passkey and restore it.</p>
+      </div>
+      <button className="btn btn-primary btn-xl" disabled={!!busy} onClick={() => run("backup")}>
+        {busy === "backup" ? "Backing up" : "Back up records"}
+      </button>
+      <button className="btn btn-outline" disabled={!!busy} onClick={() => run("restore")}>
+        {busy === "restore" ? "Restoring" : "Restore records"}
+      </button>
+      {done && (
+        <Band kind="plain">
+          <p>{done}</p>
+        </Band>
       )}
       {err && (
         <Band kind="error">
