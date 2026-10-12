@@ -53,7 +53,7 @@ export function fromBase64Url(s: string): Uint8Array {
   return out;
 }
 
-function ensureEnvironment(): void {
+export function ensureEnvironment(): void {
   if (typeof window === "undefined") throw new PasskeyError("unsupported", "Passkeys need a browser.");
   if (!window.isSecureContext) {
     throw new PasskeyError("insecure", "Lane can only create an account over a secure connection.");
@@ -64,7 +64,7 @@ function ensureEnvironment(): void {
 }
 
 /** Map Mera's error codes (and the WebAuthn error underneath) onto Lane's recovery states. */
-function classify(err: unknown): PasskeyError {
+export function classify(err: unknown): PasskeyError {
   if (err instanceof PasskeyError) return err;
   if (isMeraError(err)) {
     if (err.code === "PRF_UNAVAILABLE") {

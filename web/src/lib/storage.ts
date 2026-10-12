@@ -55,6 +55,7 @@ export interface StaffPairing {
 const SHOP_KEY = "lane.shop.v1";
 const SALES_KEY = "lane.sales.v1";
 const STAFF_KEY = "lane.staff.v1";
+const BACKUP_KEY = "lane.backup.v1";
 
 function read<T>(key: string): T | null {
   if (typeof window === "undefined") return null;
@@ -99,6 +100,12 @@ export const salesStore = {
     all[rec.id] = { ...all[rec.id], ...rec };
     write(SALES_KEY, all);
   },
+  /** Write many records in one go (a restored backup). Fields given win. */
+  putMany(recs: SaleRecord[]) {
+    const all = salesStore.all();
+    for (const rec of recs) all[rec.id] = { ...all[rec.id], ...rec };
+    write(SALES_KEY, all);
+  },
   /** Returns records with a request/reference attached to them, for ledger enrichment. */
   byTx(txHash: string) {
     return Object.values(salesStore.all()).filter((r) => r.txHash === txHash);
@@ -111,6 +118,20 @@ export const staffStore = {
   clear() {
     window.localStorage.removeItem(STAFF_KEY);
   },
+};
+
+/**
+ * The write token for this shop's encrypted records backup, and when it was last
+ * saved. The token only lets this phone replace its own backup; it cannot read it.
+ */
+export interface BackupState {
+  token: string;
+  savedAt: number;
+}
+
+export const backupStore = {
+  get: () => read<BackupState>(BACKUP_KEY),
+  set: (b: BackupState) => write(BACKUP_KEY, b),
 };
 
 /** Subscribe to local changes (same tab and other tabs). */
