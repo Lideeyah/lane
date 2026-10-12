@@ -49,7 +49,7 @@ export default function Landing() {
         <div className="quiet mt">
           <p>Nobody approves you.</p>
           <p>Lane never holds your money.</p>
-          <p>You can take your account and leave whenever you want.</p>
+          <p>If Lane disappeared tomorrow, your money would still be yours.</p>
         </div>
       </section>
 
