@@ -1,6 +1,6 @@
 # Lane
 
-Lane turns any phone into a shop's payment counter. The owner sets up with a fingerprint,
+Lane turns a phone into a shop's payment counter. The owner sets up with a fingerprint,
 the customer scans a code and pays from their own wallet, and the money lands in the shop's
 own account on Monad in under a second. The shop never installs a wallet: the fingerprint
 creates its accounts on the phone. Lane never holds a key or the money.
