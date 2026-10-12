@@ -30,6 +30,7 @@ The node at `wss://testnet-rpc.monad.xyz` serves live subscriptions.
 ## Built around Monad
 
 - **One passkey, many keys, through Mera.** Mera runs the passkey ceremonies and returns the PRF output; Lane derives the shop's account and one per till from it, and every transaction signs through a Mera signing session that zeroes its key when the action ends.
+- **The same passkey also encrypts.** The records that exist only on the owner's phone (what was sold, which payment matched which request) are backed up as a Mera secret vault: a PRF evaluation under its own fresh salt, never the account salt, keys AES-256-GCM on the phone. Lane's server stores a copy it cannot read, and a new phone restores it with the same passkey.
 
 - **Settlement before the customer walks away.** In the demo the shop's phone showed Paid 0.8 seconds after the customer confirmed.
 - **No contract between customer and shop.** A payment is one plain USDC transfer into the till, so any wallet can pay with one signature and nothing can fail or need an approval in between.
@@ -44,7 +45,7 @@ The node at `wss://testnet-rpc.monad.xyz` serves live subscriptions.
 |---|---|
 | `contracts/` | Foundry. `TillRegistry.sol` (owner→till registry, no funds, no shared slots), `MockUSD.sol` (local chain only), deploy script, 10 tests. |
 | `web/` | Next.js 16 app. All product code under `web/src`. |
-| `web/src/lib/` | Technical core: `passkey.ts` (passkeys and PRF output via Mera), `accounts.ts` (BIP-44 derivation from the PRF output, Mera signing sessions), `request.ts` (payment requests carried in the link fragment, matching), `watch.ts` (websocket subscription with polling fallback and catch-up), `ledger.ts` (this device's records plus a recent chain scan, or the indexer; balances always from chain), `chain.ts` (config, 100-block history spans), `tx.ts` (explicit-gas sends, registration, per-till sweep with a two-second queue, refunds, same-sender pacing), `shop.ts`, `staff.ts`, `storage.ts`. |
+| `web/src/lib/` | Technical core: `passkey.ts` (passkeys and PRF output via Mera), `accounts.ts` (BIP-44 derivation from the PRF output, Mera signing sessions), `request.ts` (payment requests carried in the link fragment, matching), `watch.ts` (websocket subscription with polling fallback and catch-up), `ledger.ts` (this device's records plus a recent chain scan, or the indexer; balances always from chain), `chain.ts` (config, 100-block history spans), `tx.ts` (explicit-gas sends, registration, per-till sweep with a two-second queue, refunds, same-sender pacing), `backup.ts` (records backup as a Mera secret vault), `shop.ts`, `staff.ts`, `storage.ts`. |
 | `web/src/app/api/drip/route.ts` | Gas treasury: one-at-a-time sends, shared rate limits, 21,000 explicit gas. |
 | `web/src/app/api/pair/` | Six-digit staff pairing codes: issue and one-time redeem, rate limited. |
 | `web/src/proxy.ts` | Strict content security policy with a per-request nonce; unknown paths go to `/`. |
@@ -57,7 +58,7 @@ The node at `wss://testnet-rpc.monad.xyz` serves live subscriptions.
 |---|---|
 | `/` | Landing page. Primary action reads "Start taking payments", or "Continue to your till" for a returning merchant. It never redirects. |
 | `/start` | Cold open, passkey prompt, dismissed and unsupported-authenticator recovery, insecure-context refusal, shop setup with a non-blocking preparing line, and "I already have a shop" restore. |
-| `/till` | Merchant home. Pad, request code, paid / paid short / overpaid / offline band; tills (add with one prompt, rename, hand to staff, unpair); ledger (today first, by till / by day, sale detail, refund, catching-up balances); close the day (sweep, per-till retry, day summary); settings and recovery phrase. |
+| `/till` | Merchant home. Pad, request code, paid / paid short / overpaid / offline band; tills (add with one prompt, rename, hand to staff, unpair); ledger (today first, by till / by day, sale detail, refund, catching-up balances); close the day (sweep, per-till retry, day summary); settings, records backup and recovery phrase. |
 | `/pay#…` | Customer page. No header or navigation, rebuilt from the fragment alone. Wallet path (injected provider or `ethereum:` link) and face path, balance check before signing, paid / declined / insufficient / expired / unreadable states. |
 | `/staff#…` | Staff phone. One till, its pad and today's sales. No key, no balances, no other tills. |
 | anything else | Redirects to `/`. |
@@ -94,6 +95,10 @@ queue, and a refund from the main account.
 ## Staff pairing
 
 The owner taps Hand to staff and sees a six-digit code. The staff member types it at `/staff`. Codes live in Upstash Redis (Vercel Marketplace) for ten minutes and work once; redemption is limited to 10 tries per network address per ten minutes. The store holds only the till's public address and two labels, never key material, so the claim that no server can move money still holds. The QR code and link remain as a fallback when the store is unavailable. The same store holds the treasury's rate limits.
+
+## Records backup
+
+Settings, Records backup: one fingerprint encrypts this phone's sale records into a Mera secret vault and stores it at `/api/backup`, keyed by the passkey's credential id. The vault's key comes from the passkey's PRF output under a fresh salt per backup, separate from the account salt, so the server holds ciphertext only. Replacing a backup needs a write token that lives on the phone and inside the encrypted backup, so a new phone restores first, then backs up.
 
 ## Licence
 
