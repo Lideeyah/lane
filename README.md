@@ -1,18 +1,19 @@
 # Lane
 
-A payment counter that runs in a phone browser. Merchant signs in with a fingerprint
-(passkey + PRF), accounts are derived in the browser, payments are plain stablecoin
-transfers to per-till accounts on Monad. No wallet, no server that can move money.
+Lane turns any phone into a shop's payment counter. The owner sets up with a fingerprint,
+the customer scans a code and pays from their own wallet, and the money lands in the shop's
+own account on Monad in under a second. The shop never installs a wallet: the fingerprint
+creates its accounts on the phone. Lane never holds a key or the money.
 
-Spec documents: the four `lane-*-2026-10-08.md` briefs (design, end-to-end flow,
-landing page, technical architecture).
+Built for Monad Metropolis, Consumer Products & Payments track.
+Demo video: https://youtu.be/hfj2WTRs3-Y
 
 ## Live on Monad testnet
 
 - App: https://lane-mu.vercel.app
 - TillRegistry: `0xc4C275cA0E095aA7C6012C426E08f9bE27e718DB` (chain 10143)
 - Token: Circle test USDC `0x534b2f3A21130d7a60830c2Df862319e593943A3`, verified on chain (USDC, 6 decimals)
-- Redeploy with `scripts/deploy-testnet.sh`. The treasury key is added to Vercel by hand, never by script.
+- Every push to `main` deploys the app. `scripts/deploy-testnet.sh` deploys the registry and sets the public settings; the treasury key is added to Vercel by hand, never by script.
 
 Measured on testnet, 8 Oct 2026, at about 103 gwei:
 
@@ -25,15 +26,25 @@ Measured on testnet, 8 Oct 2026, at about 103 gwei:
 
 The node at `wss://testnet-rpc.monad.xyz` serves live subscriptions.
 
+## Built around Monad
+
+- **Settlement before the customer walks away.** In the demo the shop's phone showed Paid 0.8 seconds after the customer confirmed.
+- **No contract between customer and shop.** A payment is one plain USDC transfer into the till, so any wallet can pay with one signature and nothing can fail or need an approval in between.
+- **Tills run in parallel.** Each till is its own account, and the only contract is a registry with no shared counters, so sales into different tills never touch the same state.
+- **The reserve balance rule, handled.** Accounts stay undelegated; sweeps are batched per till, a repeat sweep inside two seconds is queued, and back-to-back sends from one account are spaced three blocks apart.
+- **Exact gas, declared.** Monad charges the declared gas limit, so every transaction declares the estimate for that exact call.
+- **Public endpoint limits.** Monad's public testnet endpoint serves logs over at most 100 blocks, so all history is read in 100-block spans and tills are restored by reading the registry directly.
+
 ## Layout
 
 | Path | What |
 |---|---|
 | `contracts/` | Foundry. `TillRegistry.sol` (owner→till registry, no funds, no shared slots), `MockUSD.sol` (local chain only), deploy script, 10 tests. |
 | `web/` | Next.js 16 app. All product code under `web/src`. |
-| `web/src/lib/` | Technical core: `passkey.ts` (WebAuthn PRF), `accounts.ts` (BIP-44 derivation, one-call signing sessions), `request.ts` (fragment-borne payment requests, matching), `watch.ts` (websocket→polling transfer detection with catch-up), `ledger.ts` (indexer or chain logs, balances always from chain), `tx.ts` (explicit-gas sends, register, batched per-till sweep with 2s queue, refund planning), `storage.ts`, `staff.ts`. |
-| `web/src/app/api/drip/route.ts` | Treasury gas drip: serialised nonce queue, rate limits, 21000 explicit gas. |
-| `web/src/proxy.ts` | Strict CSP with per-request nonce. |
+| `web/src/lib/` | Technical core: `passkey.ts` (WebAuthn PRF), `accounts.ts` (BIP-44 derivation, one-call signing sessions), `request.ts` (payment requests carried in the link fragment, matching), `watch.ts` (websocket subscription with polling fallback and catch-up), `ledger.ts` (this device's records plus a recent chain scan, or the indexer; balances always from chain), `chain.ts` (config, 100-block history spans), `tx.ts` (explicit-gas sends, registration, per-till sweep with a two-second queue, refunds, same-sender pacing), `shop.ts`, `staff.ts`, `storage.ts`. |
+| `web/src/app/api/drip/route.ts` | Gas treasury: one-at-a-time sends, shared rate limits, 21,000 explicit gas. |
+| `web/src/app/api/pair/` | Six-digit staff pairing codes: issue and one-time redeem, rate limited. |
+| `web/src/proxy.ts` | Strict content security policy with a per-request nonce; unknown paths go to `/`. |
 | `indexer/` | Envio project (optional; app falls back to chain logs). |
 | `scripts/dev-chain.sh` | Starts Anvil, deploys, writes `web/.env.local`. `scripts/pay.sh <till> <amount>` simulates a customer. |
 
