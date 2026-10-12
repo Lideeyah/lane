@@ -1,4 +1,4 @@
-import { createWalletClient, http, type Address, type Hash, type HDAccount } from "viem";
+import { createWalletClient, http, type Address, type Hash, type LocalAccount } from "viem";
 import { erc20Abi, registryAbi } from "./abi";
 import { config, publicClient } from "./chain";
 import { requestDrip } from "./drip-client";
@@ -35,7 +35,7 @@ export function paced<T>(sender: Address, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
-function wallet(account: HDAccount) {
+function wallet(account: LocalAccount) {
   return createWalletClient({ account, chain: config.chain, transport: http(config.rpcUrl) });
 }
 
@@ -67,11 +67,11 @@ export async function ensureGas(address: Address): Promise<void> {
   if (res.hash) await client.waitForTransactionReceipt({ hash: res.hash, timeout: 60_000 });
 }
 
-export function sendToken(from: HDAccount, to: Address, amount: bigint, token: Address = config.token.address): Promise<Hash> {
+export function sendToken(from: LocalAccount, to: Address, amount: bigint, token: Address = config.token.address): Promise<Hash> {
   return paced(from.address, () => sendTokenNow(from, to, amount, token));
 }
 
-async function sendTokenNow(from: HDAccount, to: Address, amount: bigint, token: Address): Promise<Hash> {
+async function sendTokenNow(from: LocalAccount, to: Address, amount: bigint, token: Address): Promise<Hash> {
   const client = publicClient();
   const gas = await client.estimateContractGas({
     address: token,
@@ -91,12 +91,12 @@ async function sendTokenNow(from: HDAccount, to: Address, amount: bigint, token:
   return hash;
 }
 
-export async function registerTillOnChain(owner: HDAccount, till: Address, label: string): Promise<Hash> {
+export async function registerTillOnChain(owner: LocalAccount, till: Address, label: string): Promise<Hash> {
   await ensureGas(owner.address);
   return paced(owner.address, () => registerNow(owner, till, label));
 }
 
-async function registerNow(owner: HDAccount, till: Address, label: string): Promise<Hash> {
+async function registerNow(owner: LocalAccount, till: Address, label: string): Promise<Hash> {
   const client = publicClient();
   const gas = await client.estimateContractGas({
     address: config.registryAddress,
@@ -116,12 +116,12 @@ async function registerNow(owner: HDAccount, till: Address, label: string): Prom
   return hash;
 }
 
-export async function relabelTillOnChain(owner: HDAccount, till: Address, label: string): Promise<Hash> {
+export async function relabelTillOnChain(owner: LocalAccount, till: Address, label: string): Promise<Hash> {
   await ensureGas(owner.address);
   return paced(owner.address, () => relabelNow(owner, till, label));
 }
 
-async function relabelNow(owner: HDAccount, till: Address, label: string): Promise<Hash> {
+async function relabelNow(owner: LocalAccount, till: Address, label: string): Promise<Hash> {
   const client = publicClient();
   const gas = await client.estimateContractGas({ address: config.registryAddress, abi: registryAbi, functionName: "relabelTill", args: [till, label], account: owner });
   const hash = await wallet(owner).writeContract({ address: config.registryAddress, abi: registryAbi, functionName: "relabelTill", args: [till, label], gas });

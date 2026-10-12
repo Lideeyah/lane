@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { encodeFunctionData, numberToHex, type Address, type Hash } from "viem";
 import { Amount, Band } from "@/components/ui";
 import { erc20Abi } from "@/lib/abi";
-import { deriveAccount, mnemonicFromSecret } from "@/lib/accounts";
+import { meraSigner, mnemonicFromSecret, type MeraSigner } from "@/lib/accounts";
 import { config, publicClient } from "@/lib/chain";
 import { formatAmount } from "@/lib/format";
 import { useFragment } from "@/lib/hooks";
@@ -182,11 +182,14 @@ export default function Pay() {
     if (!req) return;
     setState({ s: "paying", how: "face" });
     let secret: Uint8Array | undefined;
+    let signer: MeraSigner | undefined;
     try {
       const got = await assertPrfDiscoverable();
       secret = got.secret;
-      const account = deriveAccount(mnemonicFromSecret(secret), 0);
+      // Mera signing session for this one payment, ended in the finally below.
+      signer = meraSigner(mnemonicFromSecret(secret), 0);
       secret.fill(0);
+      const account = signer.account;
       const client = publicClient();
       const balance = await client.readContract({ address: req.k, abi: erc20Abi, functionName: "balanceOf", args: [account.address] });
       if (balance < amount) return setState({ s: "insufficient", balance });
@@ -201,6 +204,7 @@ export default function Pay() {
       }
       setState({ s: "declined", msg: describe(e) });
     } finally {
+      signer?.end();
       secret?.fill(0);
     }
   }

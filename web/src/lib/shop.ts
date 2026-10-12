@@ -1,6 +1,6 @@
 "use client";
 import type { Address } from "viem";
-import { deriveAccount, mnemonicFromSecret, OWNER_INDEX, withSigner, type SigningSession } from "./accounts";
+import { deriveAccount, meraSigner, mnemonicFromSecret, OWNER_INDEX, withSigner, type SigningSession } from "./accounts";
 import { requestDrip } from "./drip-client";
 import { tillsFromRegistry } from "./ledger";
 import { assertPrfDiscoverable, createPasskey } from "./passkey";
@@ -23,12 +23,15 @@ export type SetupProgress = "funding" | "registering" | "ready" | "deferred";
 /**
  * Create the passkey, derive the owner and first till, and in the background
  * fund the owner and register Till 1. The key lives only inside this one
- * function's scope and is zeroed when the background registration settles.
+ * function's scope, in a Mera signing session that is ended when the background
+ * registration settles.
  */
 export async function createShop(onProgress: (p: SetupProgress) => void): Promise<Shop> {
   const { credentialId, secret } = await createPasskey();
   const mnemonic = mnemonicFromSecret(secret);
-  const owner = deriveAccount(mnemonic, OWNER_INDEX);
+  // A Mera signing session for the owner, held only until Till 1 is registered.
+  const ownerSigner = meraSigner(mnemonic, OWNER_INDEX);
+  const owner = ownerSigner.account;
   const till1 = deriveAccount(mnemonic, 1);
   const shop: Shop = {
     version: 1,
@@ -63,6 +66,7 @@ export async function createShop(onProgress: (p: SetupProgress) => void): Promis
       }
       onProgress(ok ? "ready" : "deferred");
     } finally {
+      ownerSigner.end();
       secret.fill(0);
     }
   })();

@@ -11,6 +11,7 @@
     "e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
+    "@category-labs/mera": "0.2.0",
     "@scure/bip32": "^2.4.0",
     "@scure/bip39": "^2.4.0",
     "@upstash/redis": "^1.39.0",
