@@ -3,7 +3,8 @@
 Lane turns a phone into a shop's payment counter. The owner sets up with a fingerprint,
 the customer scans a code and pays from their own wallet, and the money lands in the shop's
 own account on Monad in under a second. The shop never installs a wallet: the fingerprint
-creates its accounts on the phone. Lane never holds a key or the money.
+creates its accounts on the phone, through [Mera](https://mera.category.xyz/), Category Labs' passkey
+library. Lane never holds a key or the money.
 
 Built for Monad Metropolis, Consumer Products & Payments track.
 Demo video: https://youtu.be/hfj2WTRs3-Y
@@ -28,6 +29,8 @@ The node at `wss://testnet-rpc.monad.xyz` serves live subscriptions.
 
 ## Built around Monad
 
+- **One passkey, many keys, through Mera.** Mera runs the passkey ceremonies and returns the PRF output; Lane derives the shop's account and one per till from it, and every transaction signs through a Mera signing session that zeroes its key when the action ends.
+
 - **Settlement before the customer walks away.** In the demo the shop's phone showed Paid 0.8 seconds after the customer confirmed.
 - **No contract between customer and shop.** A payment is one plain USDC transfer into the till, so any wallet can pay with one signature and nothing can fail or need an approval in between.
 - **Tills run in parallel.** Each till is its own account, and the only contract is a registry with no shared counters, so sales into different tills never touch the same state.
@@ -41,7 +44,7 @@ The node at `wss://testnet-rpc.monad.xyz` serves live subscriptions.
 |---|---|
 | `contracts/` | Foundry. `TillRegistry.sol` (owner→till registry, no funds, no shared slots), `MockUSD.sol` (local chain only), deploy script, 10 tests. |
 | `web/` | Next.js 16 app. All product code under `web/src`. |
-| `web/src/lib/` | Technical core: `passkey.ts` (WebAuthn PRF), `accounts.ts` (BIP-44 derivation, one-call signing sessions), `request.ts` (payment requests carried in the link fragment, matching), `watch.ts` (websocket subscription with polling fallback and catch-up), `ledger.ts` (this device's records plus a recent chain scan, or the indexer; balances always from chain), `chain.ts` (config, 100-block history spans), `tx.ts` (explicit-gas sends, registration, per-till sweep with a two-second queue, refunds, same-sender pacing), `shop.ts`, `staff.ts`, `storage.ts`. |
+| `web/src/lib/` | Technical core: `passkey.ts` (passkeys and PRF output via Mera), `accounts.ts` (BIP-44 derivation from the PRF output, Mera signing sessions), `request.ts` (payment requests carried in the link fragment, matching), `watch.ts` (websocket subscription with polling fallback and catch-up), `ledger.ts` (this device's records plus a recent chain scan, or the indexer; balances always from chain), `chain.ts` (config, 100-block history spans), `tx.ts` (explicit-gas sends, registration, per-till sweep with a two-second queue, refunds, same-sender pacing), `shop.ts`, `staff.ts`, `storage.ts`. |
 | `web/src/app/api/drip/route.ts` | Gas treasury: one-at-a-time sends, shared rate limits, 21,000 explicit gas. |
 | `web/src/app/api/pair/` | Six-digit staff pairing codes: issue and one-time redeem, rate limited. |
 | `web/src/proxy.ts` | Strict content security policy with a per-request nonce; unknown paths go to `/`. |
