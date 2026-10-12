@@ -2,8 +2,9 @@ import "server-only";
 import { Redis } from "@upstash/redis";
 
 /**
- * The only shared store in Lane. It holds short-lived pairing codes and rate
- * limit counters, never key material and never anything that can move money.
+ * The only shared store in Lane. It holds short-lived pairing codes, rate limit
+ * counters and encrypted records backups it cannot read, never key material and
+ * never anything that can move money.
  * When it is not configured, features that need it say so and Lane carries on.
  */
 let client: Redis | null | undefined;

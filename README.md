@@ -8,6 +8,7 @@ library. Lane never holds a key or the money.
 
 Built for Monad Metropolis, Consumer Products & Payments track.
 Demo video: https://youtu.be/hfj2WTRs3-Y
+Mera video (passkeys, signing sessions, encrypted records backup): https://youtu.be/K8bl6tCJ-64
 
 ## Live on Monad testnet
 
@@ -31,7 +32,6 @@ The node at `wss://testnet-rpc.monad.xyz` serves live subscriptions.
 
 - **One passkey, many keys, through Mera.** Mera runs the passkey ceremonies and returns the PRF output; Lane derives the shop's account and one per till from it, and every transaction signs through a Mera signing session that zeroes its key when the action ends.
 - **The same passkey also encrypts.** The records that exist only on the owner's phone (what was sold, which payment matched which request) are backed up as a Mera secret vault: a PRF evaluation under its own fresh salt, never the account salt, keys AES-256-GCM on the phone. Lane's server stores a copy it cannot read, and a new phone restores it with the same passkey.
-
 - **Settlement before the customer walks away.** In the demo the shop's phone showed Paid 0.8 seconds after the customer confirmed.
 - **No contract between customer and shop.** A payment is one plain USDC transfer into the till, so any wallet can pay with one signature and nothing can fail or need an approval in between.
 - **Tills run in parallel.** Each till is its own account, and the only contract is a registry with no shared counters, so sales into different tills never touch the same state.
@@ -48,6 +48,7 @@ The node at `wss://testnet-rpc.monad.xyz` serves live subscriptions.
 | `web/src/lib/` | Technical core: `passkey.ts` (passkeys and PRF output via Mera), `accounts.ts` (BIP-44 derivation from the PRF output, Mera signing sessions), `request.ts` (payment requests carried in the link fragment, matching), `watch.ts` (websocket subscription with polling fallback and catch-up), `ledger.ts` (this device's records plus a recent chain scan, or the indexer; balances always from chain), `chain.ts` (config, 100-block history spans), `tx.ts` (explicit-gas sends, registration, per-till sweep with a two-second queue, refunds, same-sender pacing), `backup.ts` (records backup as a Mera secret vault), `shop.ts`, `staff.ts`, `storage.ts`. |
 | `web/src/app/api/drip/route.ts` | Gas treasury: one-at-a-time sends, shared rate limits, 21,000 explicit gas. |
 | `web/src/app/api/pair/` | Six-digit staff pairing codes: issue and one-time redeem, rate limited. |
+| `web/src/app/api/backup/route.ts` | Encrypted records backups: stores Mera vaults it cannot read, replaced only with the phone's write token, rate limited. |
 | `web/src/proxy.ts` | Strict content security policy with a per-request nonce; unknown paths go to `/`. |
 | `indexer/` | Envio project (optional; app falls back to chain logs). |
 | `scripts/dev-chain.sh` | Starts Anvil, deploys, writes `web/.env.local`. `scripts/pay.sh <till> <amount>` simulates a customer. |
@@ -94,7 +95,7 @@ queue, and a refund from the main account.
 
 ## Staff pairing
 
-The owner taps Hand to staff and sees a six-digit code. The staff member types it at `/staff`. Codes live in Upstash Redis (Vercel Marketplace) for ten minutes and work once; redemption is limited to 10 tries per network address per ten minutes. The store holds only the till's public address and two labels, never key material, so the claim that no server can move money still holds. The QR code and link remain as a fallback when the store is unavailable. The same store holds the treasury's rate limits.
+The owner taps Hand to staff and sees a six-digit code. The staff member types it at `/staff`. Codes live in Upstash Redis (Vercel Marketplace) for ten minutes and work once; redemption is limited to 10 tries per network address per ten minutes. The store holds only the till's public address and two labels, never key material, so the claim that no server can move money still holds. The QR code and link remain as a fallback when the store is unavailable. The same store holds the treasury's rate limits and the encrypted records backups.
 
 ## Records backup
 
