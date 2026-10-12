@@ -2,7 +2,7 @@
 # Deploys Lane to Monad testnet (10143):
 #   1. deploys the TillRegistry with the deployer key in .secrets/ (git-ignored)
 #   2. sets the public Vercel production settings
-#   3. deploys the web app to production and prints its URL
+#   3. leaves the deploy to Vercel's GitHub integration (builds web/ on every push to main)
 #
 # The treasury key is NOT handled here. Add it to Vercel yourself, once:
 #   vercel env add TREASURY_PRIVATE_KEY production --sensitive < .secrets/treasury.key
@@ -51,7 +51,6 @@ if ! vercel env ls production 2>/dev/null | grep -q TREASURY_PRIVATE_KEY; then
   echo "  TREASURY_PRIVATE_KEY is not set yet. Gas drips will fail until you add it (see top of this file)."
 fi
 
-echo "▸ deploying web app"
-URL=$(vercel deploy --prod --yes 2>/dev/null | tail -1)
 echo
-echo "Lane is live on Monad testnet: $URL"
+echo "Settings saved. The app deploys automatically on every push to main"
+echo "(the Vercel project builds from the web/ folder). Push, or redeploy from the Vercel dashboard."
