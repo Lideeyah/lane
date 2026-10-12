@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createWalletClient, http, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { erc20Abi } from "@/lib/abi";
-import { deriveAccount, mnemonicFromSecret, type SigningSession } from "@/lib/accounts";
+import { meraSigner, mnemonicFromSecret, type SigningSession } from "@/lib/accounts";
 import { config, publicClient } from "@/lib/chain";
 import { requestDrip } from "@/lib/drip-client";
 import { loadLedger, readBalances, tillsFromRegistry } from "@/lib/ledger";
@@ -15,7 +15,9 @@ import { startOfToday } from "@/lib/format";
 
 const secret = crypto.getRandomValues(new Uint8Array(32));
 const mnemonic = mnemonicFromSecret(secret);
-const session: SigningSession = { mnemonic, account: (i) => deriveAccount(mnemonic, i) };
+// Real Mera signing sessions, as the app uses them.
+const signers = new Map<number, ReturnType<typeof meraSigner>>();
+const session: SigningSession = { mnemonic, account: (i) => (signers.get(i) ?? signers.set(i, meraSigner(mnemonic, i)).get(i)!).account };
 const owner = session.account(0);
 const till = session.account(1);
 // Anvil default account #2: a public, well-known development key. Local chain only.
