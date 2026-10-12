@@ -6,6 +6,9 @@ own account on Monad in under a second. The shop never installs a wallet: the fi
 creates its accounts on the phone, through [Mera](https://mera.category.xyz/), Category Labs' passkey
 library. Lane never holds a key or the money.
 
+<p align="center"><img src="docs/paid.jpg" width="560" alt="The shop's phone and the customer's phone both showing Paid, 4.50 USDC, on Monad testnet"></p>
+<p align="center"><sub>A real payment on Monad testnet, from the demo: the shop's phone showed Paid 0.8 seconds after the customer confirmed.</sub></p>
+
 Built for Monad Metropolis, Consumer Products & Payments track.
 Demo video: https://youtu.be/hfj2WTRs3-Y
 Mera video (passkeys, signing sessions, encrypted records backup): https://youtu.be/K8bl6tCJ-64
@@ -88,7 +91,7 @@ queue, and a refund from the main account.
 
 ## Deploying to Monad
 
-1. Verify the stablecoin address with its issuer (architecture §13). Do not take it from memory.
+1. Verify the stablecoin address with its issuer. Do not take it from memory.
 2. `forge script script/Deploy.s.sol --rpc-url $MONAD_RPC_URL --broadcast` with `DEPLOYER_PRIVATE_KEY` set.
 3. Fill `web/.env.example` into the host's environment with `NEXT_PUBLIC_CHAIN=mainnet`, both addresses, and a dedicated funded `TREASURY_PRIVATE_KEY`.
 4. Optionally run the Envio indexer in `indexer/` and set `NEXT_PUBLIC_INDEXER_URL`.
