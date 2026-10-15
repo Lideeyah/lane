@@ -1,8 +1,8 @@
 # Lane
 
 Lane turns a phone into a shop's payment counter. The owner sets up with a fingerprint,
-the customer scans a code and pays from their own wallet, and the money lands in the shop's
-own account on Monad in under a second. The shop never installs a wallet: the fingerprint
+the customer scans a code and pays from their own wallet or straight from an exchange app,
+and the money lands in the shop's own account on Monad. The shop never installs a wallet: the fingerprint
 creates its accounts on the phone, through [Mera](https://mera.category.xyz/), Category Labs' passkey
 library. Lane never holds a key or the money.
 
@@ -35,6 +35,7 @@ The node at `wss://testnet-rpc.monad.xyz` serves live subscriptions.
 
 - **One passkey, many keys, through Mera.** Mera runs the passkey ceremonies and returns the PRF output; Lane derives the shop's account and one per till from it, and every transaction signs through a Mera signing session that zeroes its key when the action ends.
 - **The same passkey also encrypts.** The records that exist only on the owner's phone (what was sold, which payment matched which request) are backed up as a Mera secret vault: a PRF evaluation under its own fresh salt, never the account salt, keys AES-256-GCM on the phone. Lane's server stores a copy it cannot read, and a new phone restores it with the same passkey.
+- **USDC or USDT, whichever the customer holds.** On mainnet a till accepts Circle's USDC and Tether's USDT0, counted as dollars one for one. A customer whose USDT sits on an exchange such as Bybit can withdraw it on the Monad network straight to the till, with no wallet and no MON for gas. Close the day moves each coin in its own transaction, and refunds go back in the coin that was paid, to an address the shop confirms.
 - **Settlement before the customer walks away.** In the demo the shop's phone showed Paid 0.8 seconds after the customer confirmed.
 - **No contract between customer and shop.** A payment is one plain USDC transfer into the till, so any wallet can pay with one signature and nothing can fail or need an approval in between.
 - **Tills run in parallel.** Each till is its own account, and the only contract is a registry with no shared counters, so sales into different tills never touch the same state.
@@ -63,7 +64,7 @@ The node at `wss://testnet-rpc.monad.xyz` serves live subscriptions.
 | `/` | Landing page. Primary action reads "Start taking payments", or "Continue to your till" for a returning merchant. It never redirects. |
 | `/start` | Cold open, passkey prompt, dismissed and unsupported-authenticator recovery, insecure-context refusal, shop setup with a non-blocking preparing line, and "I already have a shop" restore. |
 | `/till` | Merchant home. Pad, request code, paid / paid short / overpaid / offline band; tills (add with one prompt, rename, hand to staff, unpair); ledger (today first, by till / by day, sale detail, refund, catching-up balances); close the day (sweep, per-till retry, day summary); settings, records backup and recovery phrase. |
-| `/pay#…` | Customer page. No header or navigation, rebuilt from the fragment alone. Wallet path (injected provider or `ethereum:` link) and face path, balance check before signing, paid / declined / insufficient / expired / unreadable states. |
+| `/pay#…` | Customer page. No header or navigation, rebuilt from the fragment alone. Wallet path (injected provider or `ethereum:` link), exchange path (network, address and amount to copy into an exchange withdrawal; mainnet only) and face path, pays in whichever accepted stablecoin the payer holds enough of, balance check before signing, paid / declined / insufficient / expired / unreadable states. |
 | `/staff#…` | Staff phone. One till, its pad and today's sales. No key, no balances, no other tills. |
 | anything else | Redirects to `/`. |
 
@@ -87,14 +88,17 @@ cd web && LANE_ORIGIN=http://localhost:3100 npm run e2e
 
 The e2e suite needs Anvil and a running server. It covers the treasury drip, till
 registration, a customer payment, the chain-read ledger, the sweep and its two-second
-queue, and a refund from the main account.
+queue, a refund from the main account, and a second stablecoin: a payment in it, closing
+the day with each coin moved separately, and a refund in the coin that was paid.
 
-## Deploying to Monad
+## Deploying to Monad mainnet
 
-1. Verify the stablecoin address with its issuer. Do not take it from memory.
-2. `forge script script/Deploy.s.sol --rpc-url $MONAD_RPC_URL --broadcast` with `DEPLOYER_PRIVATE_KEY` set.
-3. Fill `web/.env.example` into the host's environment with `NEXT_PUBLIC_CHAIN=mainnet`, both addresses, and a dedicated funded `TREASURY_PRIVATE_KEY`.
-4. Optionally run the Envio indexer in `indexer/` and set `NEXT_PUBLIC_INDEXER_URL`.
+1. `scripts/deploy-mainnet.sh` verifies USDC and USDT0 on chain, creates a deployer and a treasury key in `.secrets/mainnet/` (git-ignored), prints both addresses and stops.
+2. Fund the deployer (about 0.08 MON for the registry) and the treasury (about 0.03 MON per new shop).
+3. `scripts/deploy-mainnet.sh --deploy` deploys the TillRegistry and prints the host's environment, including `NEXT_PUBLIC_EXTRA_TOKENS` for USDT0. Add `TREASURY_PRIVATE_KEY` to the host yourself.
+4. Optionally run the Envio indexer in `indexer/` (it already lists both stablecoins) and set `NEXT_PUBLIC_INDEXER_URL`.
+
+Stablecoins on Monad mainnet, verified 15 Oct 2026 against the issuers and the chain: USDC `0x754704Bc059F8C67012fEd69BC8A327a5aafb603`, USDT0 `0xe7cd86e13AC4309349F30B3435a9d337750fC82D`, both 6 decimals.
 
 ## Staff pairing
 
