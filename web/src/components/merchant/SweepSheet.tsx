@@ -8,7 +8,8 @@ import { otherTokens, readBalances } from "@/lib/ledger";
 import { PasskeyError } from "@/lib/passkey";
 import { syncRegistry } from "@/lib/shop";
 import type { Shop } from "@/lib/storage";
-import { describe, sweepTills, type OtherBalances, type SweepResult } from "@/lib/tx";
+import { acceptedToken } from "@/lib/chain";
+import { describe, failed, sweepTills, type SweepResult, type TillHoldings } from "@/lib/tx";
 import { salesCount, todays, total, type LedgerState } from "@/lib/useLedger";
 
 type State = { s: "confirm" } | { s: "sweeping" } | { s: "partial"; results: SweepResult[] } | { s: "summary" } | { s: "error"; msg: string };
@@ -26,17 +27,19 @@ export function SweepSheet({ shop, ledger, onClose }: { shop: Shop; ledger: Ledg
     try {
       const addrs = shop.tills.map((t) => t.address);
       const [fresh, extra] = await Promise.all([readBalances(addrs, shop.owner), otherTokens(addrs).catch(() => [])]);
-      const others: OtherBalances = {};
-      for (const o of extra) for (const [till, amount] of Object.entries(o.balances)) (others[till as Address] ??= []).push({ token: o.token, amount });
-      const targets = shop.tills.filter((t) => (!only || t.address === only) && ((fresh.balances[t.address] ?? 0n) > 0n || (others[t.address]?.length ?? 0) > 0));
+      // Accepted stablecoins first, then anything unrecognised, each moved in its own transaction.
+      const holdings: TillHoldings = {};
+      for (const t of shop.tills) holdings[t.address] = [...(fresh.holdings[t.address] ?? [])];
+      for (const o of extra) for (const [till, amount] of Object.entries(o.balances)) (holdings[till as Address] ??= []).push({ token: o.token, amount });
+      const targets = shop.tills.filter((t) => (!only || t.address === only) && (holdings[t.address]?.length ?? 0) > 0);
       const results = await withSigner(shop.credentialId, async (session) => {
-        const r = await sweepTills(session, targets, fresh.balances, undefined, others);
+        const r = await sweepTills(session, targets, holdings);
         await syncRegistry(session).catch(() => undefined);
         return r;
       });
       ledger.refresh();
-      const failed = results.filter((r) => r.error || r.others?.some((o) => o.error));
-      setState(failed.length ? { s: "partial", results: failed } : { s: "summary" });
+      const stuck = results.filter(failed);
+      setState(stuck.length ? { s: "partial", results: stuck } : { s: "summary" });
     } catch (e) {
       if (e instanceof PasskeyError && e.kind === "dismissed") return setState({ s: "confirm" });
       setState({ s: "error", msg: describe(e) });
@@ -113,14 +116,17 @@ export function SweepSheet({ shop, ledger, onClose }: { shop: Shop; ledger: Ledg
                     <span>{label(r.till)}</span>
                     <span className="small muted">
                       {r.error ??
-                        r.others
-                          ?.filter((o) => o.error)
-                          .map((o) => `An unrecognised token (${formatOther(o.amount)}) did not move.`)
+                        r.moved
+                          .filter((m) => m.error)
+                          .map((m) => {
+                            const known = acceptedToken(m.token);
+                            return known ? `${formatAmount(m.amount)} ${known.symbol} did not move.` : `An unrecognised token (${formatOther(m.amount)}) did not move.`;
+                          })
                           .join(" ")}
                     </span>
                   </span>
                   <button className="btn btn-primary" style={{ width: "auto", minHeight: 44 }} onClick={() => run(r.till)}>
-                    Retry {formatAmount(r.amount)}
+                    Retry
                   </button>
                 </div>
               ))}

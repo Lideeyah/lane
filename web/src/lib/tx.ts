@@ -1,6 +1,6 @@
 import { createWalletClient, http, type Address, type Hash, type LocalAccount } from "viem";
 import { erc20Abi, registryAbi } from "./abi";
-import { config, publicClient } from "./chain";
+import { acceptedToken, config, publicClient } from "./chain";
 import { requestDrip } from "./drip-client";
 import type { SigningSession } from "./accounts";
 
@@ -134,37 +134,41 @@ async function relabelNow(owner: LocalAccount, till: Address, label: string): Pr
 export interface SweepResult {
   till: Address;
   index: number;
+  /** Accepted stablecoins moved, counted as dollars. */
   amount: bigint;
-  hash?: Hash;
+  /** Each token moved, accepted stablecoins first, or the reason it was not. */
+  moved: { token: Address; amount: bigint; hash?: Hash; error?: string }[];
+  /** Set when nothing could be attempted, for example no gas. */
   error?: string;
-  /** Unrecognised tokens moved alongside, or the reason they were not. */
-  others?: { token: Address; amount: bigint; hash?: Hash; error?: string }[];
 }
 
-/** Balances of tokens other than the shop's own, per till. Lane moves them but never prices them. */
-export type OtherBalances = Record<Address, { token: Address; amount: bigint }[]>;
+/** What each till holds, per token: accepted stablecoins and any unrecognised ones. */
+export type TillHoldings = Record<Address, { token: Address; amount: bigint }[]>;
 
 const lastSweep = new Map<string, number>();
 const sweepQueue = new Map<string, Promise<unknown>>();
 
+export function failed(r: SweepResult): boolean {
+  return !!r.error || r.moved.some((m) => m.error);
+}
+
 /**
- * Sweep each till into the owner account with its own transaction, so a
- * failure affects exactly one till. A second sweep of the same till inside the
- * window is queued behind the first rather than sent (architecture §6).
+ * Sweep each till into the owner account, one transaction per token, so a
+ * failure affects exactly one till and one token. A second sweep of the same
+ * till inside the window is queued behind the first rather than sent (architecture §6).
  */
 export async function sweepTills(
   session: SigningSession,
   tills: { index: number; address: Address }[],
-  balances: Record<Address, bigint>,
+  holdings: TillHoldings,
   onProgress?: (r: SweepResult) => void,
-  others: OtherBalances = {},
 ): Promise<SweepResult[]> {
   const owner = session.account(0).address;
   const results = await Promise.all(
     tills.map(async (t): Promise<SweepResult> => {
-      const amount = balances[t.address] ?? 0n;
-      const extra = (others[t.address] ?? []).filter((o) => o.amount > 0n);
-      if (amount === 0n && extra.length === 0) return { till: t.address, index: t.index, amount };
+      const held = (holdings[t.address] ?? []).filter((h) => h.amount > 0n);
+      const amount = held.filter((h) => acceptedToken(h.token)).reduce((s, h) => s + h.amount, 0n);
+      if (held.length === 0) return { till: t.address, index: t.index, amount, moved: [] };
       const key = t.address.toLowerCase();
       const run = async (): Promise<SweepResult> => {
         const since = Date.now() - (lastSweep.get(key) ?? 0);
@@ -173,21 +177,20 @@ export async function sweepTills(
         try {
           const acct = session.account(t.index);
           await ensureGas(acct.address);
-          const hash = amount > 0n ? await sendToken(acct, owner, amount) : undefined;
           // Same sender, so these go one after another; each waits for its receipt.
-          const moved: NonNullable<SweepResult["others"]> = [];
-          for (const o of extra) {
+          const moved: SweepResult["moved"] = [];
+          for (const h of held) {
             try {
-              moved.push({ ...o, hash: await sendToken(acct, owner, o.amount, o.token) });
+              moved.push({ ...h, hash: await sendToken(acct, owner, h.amount, h.token) });
             } catch (e) {
-              moved.push({ ...o, error: describe(e) });
+              moved.push({ ...h, error: describe(e) });
             }
           }
-          const r: SweepResult = { till: t.address, index: t.index, amount, hash, ...(moved.length ? { others: moved } : {}) };
+          const r: SweepResult = { till: t.address, index: t.index, amount, moved };
           onProgress?.(r);
           return r;
         } catch (e) {
-          const r = { till: t.address, index: t.index, amount, error: describe(e) };
+          const r: SweepResult = { till: t.address, index: t.index, amount, moved: [], error: describe(e) };
           onProgress?.(r);
           return r;
         }
@@ -216,10 +219,11 @@ export function planRefund(tillIndex: number, till: Address, owner: Address, amo
   return null;
 }
 
-export async function refund(session: SigningSession, plan: RefundPlan, payer: Address, amount: bigint): Promise<Hash> {
+/** Refund in the stablecoin the customer paid with, to the address the shop confirmed. */
+export async function refund(session: SigningSession, plan: RefundPlan, to: Address, amount: bigint, token: Address = config.token.address): Promise<Hash> {
   const acct = session.account(plan.sourceIndex);
   await ensureGas(acct.address);
-  return sendToken(acct, payer, amount);
+  return sendToken(acct, to, amount, token);
 }
 
 export function describe(e: unknown): string {
