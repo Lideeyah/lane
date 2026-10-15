@@ -69,6 +69,18 @@ export const config = {
     symbol: process.env.NEXT_PUBLIC_TOKEN_SYMBOL || "USD",
     decimals: Number(process.env.NEXT_PUBLIC_TOKEN_DECIMALS || 6),
   },
+  /**
+   * Every dollar stablecoin a till accepts: the shop's own token first, then any
+   * extras (NEXT_PUBLIC_EXTRA_TOKENS, "address:SYMBOL" pairs, comma separated).
+   * They are counted as dollars one for one, so they must share the token's decimals.
+   */
+  get tokens(): TokenInfo[] {
+    return acceptedTokens();
+  },
+  /** What amounts are shown in: the token's symbol, or "USD" when a till takes several. */
+  get unit(): string {
+    return acceptedTokens().length > 1 ? process.env.NEXT_PUBLIC_UNIT || "USD" : config.token.symbol;
+  },
   get registryAddress(): Address {
     return requireAddress("NEXT_PUBLIC_REGISTRY_ADDRESS", process.env.NEXT_PUBLIC_REGISTRY_ADDRESS);
   },
@@ -77,6 +89,35 @@ export const config = {
   /** Two sweeps from one till inside this window are queued, not sent (architecture §6). */
   sweepWindowMs: 2000,
 } as const;
+
+export interface TokenInfo {
+  address: Address;
+  symbol: string;
+  decimals: number;
+}
+
+let _tokens: TokenInfo[] | undefined;
+function acceptedTokens(): TokenInfo[] {
+  if (_tokens) return _tokens;
+  const main: TokenInfo = { address: config.token.address, symbol: config.token.symbol, decimals: config.token.decimals };
+  const extras = (process.env.NEXT_PUBLIC_EXTRA_TOKENS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((pair): TokenInfo => {
+      const [address, symbol] = pair.split(":");
+      return { address: requireAddress("NEXT_PUBLIC_EXTRA_TOKENS", address), symbol: (symbol || "USD").slice(0, 12), decimals: main.decimals };
+    })
+    .filter((t) => t.address.toLowerCase() !== main.address.toLowerCase());
+  _tokens = [main, ...extras];
+  return _tokens;
+}
+
+/** The accepted token at this address, if it is one. */
+export function acceptedToken(address: string): TokenInfo | undefined {
+  const a = address.toLowerCase();
+  return acceptedTokens().find((t) => t.address.toLowerCase() === a);
+}
 
 let _public: PublicClient | undefined;
 /** HTTP client for reads. One per page lifetime. */
