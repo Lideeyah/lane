@@ -4,7 +4,7 @@ import { encodeFunctionData, numberToHex, type Address, type Hash } from "viem";
 import { Amount, Band } from "@/components/ui";
 import { erc20Abi } from "@/lib/abi";
 import { meraSigner, mnemonicFromSecret, type MeraSigner } from "@/lib/accounts";
-import { config, publicClient } from "@/lib/chain";
+import { config, inChunks, publicClient, type TokenInfo } from "@/lib/chain";
 import { formatAmount } from "@/lib/format";
 import { useFragment } from "@/lib/hooks";
 import { assertPrfDiscoverable, PasskeyError } from "@/lib/passkey";
@@ -31,12 +31,29 @@ type State =
   | { s: "ready" }
   | { s: "paying"; how: "wallet" | "face" }
   | { s: "waiting-wallet" }
+  | { s: "exchange" }
+  | { s: "waiting-exchange" }
   | { s: "confirmed"; hash?: Hash }
   | { s: "declined"; msg?: string }
   | { s: "insufficient"; balance: bigint }
   | { s: "no-wallet" };
 
 const pendingKey = (r: string) => `lane.pay.${r}`;
+
+/** Exchanges can only send real money, so the exchange path is hidden on testnet. */
+const EXCHANGE_PAY = config.chainKey !== "testnet";
+
+/**
+ * Which accepted stablecoin to pay with: the one the request names if the payer
+ * holds enough of it, otherwise any other accepted one they hold enough of.
+ */
+async function pickToken(holder: Address, req: PaymentRequest, amount: bigint): Promise<{ token: TokenInfo } | { short: bigint }> {
+  const client = publicClient();
+  const tokens = [...config.tokens].sort((a, b) => (a.address.toLowerCase() === req.k.toLowerCase() ? -1 : b.address.toLowerCase() === req.k.toLowerCase() ? 1 : 0));
+  const held = await Promise.all(tokens.map((t) => client.readContract({ address: t.address, abi: erc20Abi, functionName: "balanceOf", args: [holder] }).catch(() => 0n)));
+  const i = held.findIndex((b) => b >= amount);
+  return i >= 0 ? { token: tokens[i] } : { short: held.reduce((m, b) => (b > m ? b : m), 0n) };
+}
 
 export default function Pay() {
   const [req, setReq] = useState<PaymentRequest | null>(null);
@@ -54,21 +71,21 @@ export default function Pay() {
     if (!isPaymentRequest(p) || p.c !== config.chain.id) return setState({ s: "invalid" });
     setReq(p);
     // Returning cold from a wallet app: resume from what this tab recorded.
-    let pending: { hash?: Hash; at: number } | null = null;
+    let pending: { hash?: Hash; at: number; via?: "exchange" } | null = null;
     try {
       pending = JSON.parse(sessionStorage.getItem(pendingKey(p.r)) ?? "null");
     } catch {}
-    if (pending) return setState(pending.hash ? { s: "paying", how: "wallet" } : { s: "waiting-wallet" });
+    if (pending) return setState(pending.hash ? { s: "paying", how: "wallet" } : pending.via === "exchange" ? { s: "waiting-exchange" } : { s: "waiting-wallet" });
     if (isExpired(p)) return setState({ s: "expired" });
     setState({ s: "ready" });
   }, [fragment]);
 
   const amount = req ? BigInt(req.a) : 0n;
 
-  const markPending = useCallback(async (r: PaymentRequest, hash?: Hash) => {
+  const markPending = useCallback(async (r: PaymentRequest, hash?: Hash, via?: "exchange") => {
     const write = (block?: string) => {
       try {
-        sessionStorage.setItem(pendingKey(r.r), JSON.stringify({ hash, at: Date.now(), block }));
+        sessionStorage.setItem(pendingKey(r.r), JSON.stringify({ hash, at: Date.now(), block, via }));
       } catch {}
     };
     write();
@@ -81,11 +98,12 @@ export default function Pay() {
 
   // Watch for this tab's payment landing: by hash when known, otherwise by amount and time.
   useEffect(() => {
-    if (!req || (state.s !== "paying" && state.s !== "waiting-wallet")) return;
+    if (!req || (state.s !== "paying" && state.s !== "waiting-wallet" && state.s !== "waiting-exchange")) return;
     let stop = false;
     const client = publicClient();
+    const tokens = config.tokens.map((t) => t.address);
     const tick = async () => {
-      let pending: { hash?: Hash; at: number; block?: string } | null = null;
+      let pending: { hash?: Hash; at: number; block?: string; via?: string } | null = null;
       try {
         pending = JSON.parse(sessionStorage.getItem(pendingKey(req.r)) ?? "null");
       } catch {}
@@ -98,21 +116,25 @@ export default function Pay() {
             return;
           }
         } else if (pending) {
+          // An exchange withdrawal can take minutes, longer than one log query may span,
+          // so read forward from where the last look ended.
           const head = await client.getBlockNumber();
-          const logs = await client.getContractEvents({
-            address: req.k,
-            abi: erc20Abi,
-            eventName: "Transfer",
-            args: { to: req.t },
-            fromBlock: pending.block ? BigInt(pending.block) : head > 300n ? head - 300n : 0n,
-          });
-          const hit = logs.find((l) => l.args.value === amount);
-          if (hit && !stop) return setState({ s: "confirmed", hash: hit.transactionHash ?? undefined });
+          const from = pending.block ? BigInt(pending.block) : head > 300n ? head - 300n : 0n;
+          if (from <= head) {
+            const logs = await inChunks(from, head, (a, b) =>
+              client.getContractEvents({ address: tokens, abi: erc20Abi, eventName: "Transfer", args: { to: req.t }, fromBlock: a, toBlock: b }),
+            );
+            const hit = logs.find((l) => l.args.value === amount);
+            if (hit && !stop) return setState({ s: "confirmed", hash: hit.transactionHash ?? undefined });
+            try {
+              sessionStorage.setItem(pendingKey(req.r), JSON.stringify({ ...pending, block: (head + 1n).toString() }));
+            } catch {}
+          }
         }
       } catch {
         /* offline: keep trying, the payment lands regardless (flow §4.7) */
       }
-      if (!stop) setTimeout(tick, 500);
+      if (!stop) setTimeout(tick, pending?.via === "exchange" ? 2000 : 500);
     };
     void tick();
     return () => {
@@ -162,13 +184,14 @@ export default function Pay() {
       }
       // Check the balance before asking for a signature (flow §4.5).
       const client = publicClient();
-      const balance = await client.readContract({ address: req.k, abi: erc20Abi, functionName: "balanceOf", args: [from] });
-      if (balance < amount) return setState({ s: "insufficient", balance });
+      const pick = await pickToken(from, req, amount);
+      if ("short" in pick) return setState({ s: "insufficient", balance: pick.short });
+      const token = pick.token.address;
       const data = encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [req.t, amount] });
-      const gas = await client.estimateGas({ account: from, to: req.k, data });
+      const gas = await client.estimateGas({ account: from, to: token, data });
       const hash = (await eth.request({
         method: "eth_sendTransaction",
-        params: [{ from, to: req.k, data, gas: numberToHex(gas) }],
+        params: [{ from, to: token, data, gas: numberToHex(gas) }],
       })) as Hash;
       markPending(req, hash);
       // The watcher effect picks up the receipt.
@@ -190,11 +213,10 @@ export default function Pay() {
       signer = meraSigner(mnemonicFromSecret(secret), 0);
       secret.fill(0);
       const account = signer.account;
-      const client = publicClient();
-      const balance = await client.readContract({ address: req.k, abi: erc20Abi, functionName: "balanceOf", args: [account.address] });
-      if (balance < amount) return setState({ s: "insufficient", balance });
+      const pick = await pickToken(account.address, req, amount);
+      if ("short" in pick) return setState({ s: "insufficient", balance: pick.short });
       await ensureGas(account.address);
-      const hash = await sendToken(account, req.t, amount);
+      const hash = await sendToken(account, req.t, amount, pick.token.address);
       markPending(req, hash);
       setState({ s: "confirmed", hash });
     } catch (e) {
@@ -216,6 +238,28 @@ export default function Pay() {
       } catch {}
     }
     setState({ s: "ready" });
+  }
+
+  // The block when the customer opened the exchange steps: a fast withdrawal can land
+  // before they come back to tap "I have sent it", and it must still count.
+  const [exchangeFrom, setExchangeFrom] = useState<bigint | null>(null);
+  async function openExchange() {
+    setState({ s: "exchange" });
+    if (exchangeFrom === null) {
+      const head = await publicClient().getBlockNumber().catch(() => undefined);
+      if (head !== undefined) setExchangeFrom(head > 2n ? head - 2n : 0n);
+    }
+  }
+
+  async function sentFromExchange() {
+    if (!req) return;
+    if (exchangeFrom === null) await markPending(req, undefined, "exchange");
+    else {
+      try {
+        sessionStorage.setItem(pendingKey(req.r), JSON.stringify({ at: Date.now(), block: exchangeFrom.toString(), via: "exchange" }));
+      } catch {}
+    }
+    setState({ s: "waiting-exchange" });
   }
 
   if (state.s === "loading") return <main className="screen" />;
@@ -277,7 +321,7 @@ export default function Pay() {
       {state.s === "no-wallet" && (
         <div className="stack">
           <Band kind="warning">
-            <p>No wallet app opened on this phone. You can pay from a wallet on another device by sending exactly {formatAmount(amount)} {config.token.symbol} to this till.</p>
+            <p>No wallet app opened on this phone. You can pay from a wallet on another device by sending exactly {formatAmount(amount)} {config.tokens.map((t) => t.symbol).join(" or ")} on {config.chain.name} to this till.</p>
           </Band>
           <p className="small num" style={{ wordBreak: "break-all" }}>
             {req.t}
@@ -318,6 +362,20 @@ export default function Pay() {
         </div>
       )}
 
+      {state.s === "exchange" && <ExchangeSteps req={req} amount={amount} onSent={sentFromExchange} onBack={retry} />}
+
+      {state.s === "waiting-exchange" && (
+        <div className="stack">
+          <p className="statusline center" aria-live="polite">
+            Waiting for your exchange. A withdrawal can take a few minutes. This page updates when the money lands.
+          </p>
+          <p className="small muted center">If your exchange took its fee out of the amount, the shop&rsquo;s screen shows what arrived.</p>
+          <button className="btn btn-text" onClick={() => setState({ s: "exchange" })}>
+            See the details again
+          </button>
+        </div>
+      )}
+
       {(state.s === "paying" || state.s === "waiting-wallet") && (
         <div className="stack">
           <p className="statusline center" aria-live="polite">
@@ -336,6 +394,11 @@ export default function Pay() {
           <button className="btn btn-primary btn-xl" onClick={payWithWallet}>
             Pay {formatAmount(amount)} with your wallet
           </button>
+          {EXCHANGE_PAY && (
+            <button className="btn btn-outline" onClick={openExchange}>
+              Pay from an exchange app
+            </button>
+          )}
           <button className="btn btn-outline" onClick={payWithFace}>
             Pay with your face
           </button>
@@ -343,5 +406,57 @@ export default function Pay() {
         </div>
       )}
     </main>
+  );
+}
+
+function CopyRow({ label, value, shown }: { label: string; value: string; shown?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="list-row static" style={{ alignItems: "center", gap: 12 }}>
+      <span className="stack" style={{ gap: 2, minWidth: 0 }}>
+        <span className="small muted">{label}</span>
+        <span className="num" style={{ wordBreak: "break-all" }}>
+          {shown ?? value}
+        </span>
+      </span>
+      <button
+        className="btn btn-outline"
+        style={{ width: "auto", minHeight: 40, flexShrink: 0 }}
+        onClick={() => {
+          void navigator.clipboard?.writeText(value);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        }}
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
+/** Paying from an exchange account: a withdrawal on the Monad network straight to this till. */
+function ExchangeSteps({ req, amount, onSent, onBack }: { req: PaymentRequest; amount: bigint; onSent: () => void; onBack: () => void }) {
+  const coins = config.tokens.map((t) => t.symbol.replace(/0$/, "")).join(" or ");
+  return (
+    <div className="stack" style={{ gap: 16 }}>
+      <h2>Pay from an exchange app</h2>
+      <p className="small">In an exchange that sends on the {config.chain.name} network, such as Bybit, choose Withdraw, then {coins}, and fill in:</p>
+      <div className="list">
+        <CopyRow label="Network" value={config.chain.name} />
+        <CopyRow label="Address" value={req.t} />
+        <CopyRow label="Amount the shop must receive" value={formatAmount(amount).replace(/,/g, "")} />
+      </div>
+      <Band kind="warning">
+        <p className="small">
+          Choose the {config.chain.name} network only: money sent on another network will not reach the shop. If your exchange takes its fee out of the amount, add the fee so that {formatAmount(amount)} arrives.
+        </p>
+      </Band>
+      <button className="btn btn-primary btn-xl" onClick={onSent}>
+        I have sent it
+      </button>
+      <button className="btn btn-text" onClick={onBack}>
+        Back
+      </button>
+    </div>
   );
 }
