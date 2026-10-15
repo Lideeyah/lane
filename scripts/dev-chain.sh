@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts a local Anvil chain, deploys the registry and a mock stablecoin, funds a
+# Starts a local Anvil chain, deploys the registry and two mock stablecoins, funds a
 # demo customer, and writes web/.env.local so `npm run dev` works end to end.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,10 +22,12 @@ echo "▸ deploying registry + mock token"
 cd "$ROOT/contracts"
 OUT=$(DEPLOYER_PRIVATE_KEY=$DEPLOYER_PK DEV_CUSTOMER=$CUSTOMER forge script script/Deploy.s.sol:Deploy --rpc-url http://127.0.0.1:8545 --broadcast 2>&1)
 REGISTRY=$(echo "$OUT" | grep -E '^\s*TILL_REGISTRY' | awk '{print $2}')
-TOKEN=$(echo "$OUT" | grep -E '^\s*TOKEN' | awk '{print $2}')
-if [[ -z "$REGISTRY" || -z "$TOKEN" ]]; then echo "$OUT"; echo "deploy failed"; exit 1; fi
+TOKEN=$(echo "$OUT" | grep -E '^\s*TOKEN ' | awk '{print $2}')
+TOKEN2=$(echo "$OUT" | grep -E '^\s*TOKEN2 ' | awk '{print $2}')
+if [[ -z "$REGISTRY" || -z "$TOKEN" || -z "$TOKEN2" ]]; then echo "$OUT"; echo "deploy failed"; exit 1; fi
 echo "  registry $REGISTRY"
-echo "  token    $TOKEN"
+echo "  token    $TOKEN (stands in for USDC)"
+echo "  token 2  $TOKEN2 (stands in for USDT0)"
 
 cat > "$ROOT/web/.env.local" <<ENV
 NEXT_PUBLIC_CHAIN=local
@@ -34,13 +36,14 @@ NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8545
 NEXT_PUBLIC_TOKEN_ADDRESS=$TOKEN
 NEXT_PUBLIC_TOKEN_SYMBOL=mUSD
 NEXT_PUBLIC_TOKEN_DECIMALS=6
+NEXT_PUBLIC_EXTRA_TOKENS=$TOKEN2:mUSDT
 NEXT_PUBLIC_REGISTRY_ADDRESS=$REGISTRY
 TREASURY_PRIVATE_KEY=$TREASURY_PK
 DRIP_AMOUNT_MON=0.05
 ENV
 echo "▸ wrote web/.env.local"
 echo
-echo "Demo customer (has 10,000 mUSD): $CUSTOMER"
+echo "Demo customer (has 10,000 mUSD and 10,000 mUSDT): $CUSTOMER"
 echo "Import this key into a browser wallet pointed at http://127.0.0.1:8545 (chain 31337):"
 echo "  $CUSTOMER_PK"
 echo
