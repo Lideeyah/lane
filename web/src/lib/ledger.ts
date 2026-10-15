@@ -1,6 +1,6 @@
 import type { Address } from "viem";
 import { erc20Abi, registryAbi } from "./abi";
-import { config, inChunks, publicClient, RECENT_BLOCKS } from "./chain";
+import { acceptedToken, config, inChunks, publicClient, RECENT_BLOCKS } from "./chain";
 import { salesStore, type MatchKind, type SaleRecord } from "./storage";
 
 /**
@@ -13,6 +13,8 @@ import { salesStore, type MatchKind, type SaleRecord } from "./storage";
 export interface LedgerEntry {
   id: string;
   txHash: `0x${string}`;
+  /** Which accepted stablecoin moved. */
+  token: Address;
   till: Address;
   /** Counterparty: the payer for a sale, the recipient for a refund. */
   counterparty: Address;
@@ -28,8 +30,11 @@ export interface LedgerEntry {
 
 export interface Ledger {
   entries: LedgerEntry[];
+  /** Per till, every accepted stablecoin counted as dollars. */
   balances: Record<Address, bigint>;
   ownerBalance: bigint;
+  /** Per address, what each accepted stablecoin holds, for moving and refunding. */
+  holdings: Holdings;
   source: "indexer" | "chain";
   /** True when only balances could be read and history is still loading. */
   catchingUp: boolean;
@@ -46,17 +51,33 @@ function enrich(e: Omit<LedgerEntry, "kind" | "reference" | "requestId" | "reque
   };
 }
 
-export async function readBalances(tills: Address[], owner?: Address): Promise<{ balances: Record<Address, bigint>; ownerBalance: bigint }> {
+export interface Holding {
+  token: Address;
+  amount: bigint;
+}
+/** Non-zero balances per address, accepted stablecoins in config order. */
+export type Holdings = Record<Address, Holding[]>;
+
+export async function readBalances(tills: Address[], owner?: Address): Promise<{ balances: Record<Address, bigint>; ownerBalance: bigint; holdings: Holdings }> {
   const client = publicClient();
   const addrs = owner ? [...tills, owner] : tills;
+  const tokens = config.tokens;
   const results = await Promise.all(
     addrs.map((a) =>
-      client.readContract({ address: config.token.address, abi: erc20Abi, functionName: "balanceOf", args: [a] }).catch(() => 0n),
+      Promise.all(
+        tokens.map((t) => client.readContract({ address: t.address, abi: erc20Abi, functionName: "balanceOf", args: [a] }).catch(() => 0n)),
+      ),
     ),
   );
+  const holdings: Holdings = {};
+  const sums: bigint[] = [];
+  addrs.forEach((a, i) => {
+    holdings[a] = tokens.map((t, j) => ({ token: t.address, amount: results[i][j] })).filter((h) => h.amount > 0n);
+    sums.push(results[i].reduce((s, v) => s + v, 0n));
+  });
   const balances: Record<Address, bigint> = {};
-  tills.forEach((t, i) => (balances[t] = results[i]));
-  return { balances, ownerBalance: owner ? results[results.length - 1] : 0n };
+  tills.forEach((t, i) => (balances[t] = sums[i]));
+  return { balances, ownerBalance: owner ? sums[sums.length - 1] : 0n, holdings };
 }
 
 /* ---------- block lookup by time (chain fallback) ---------- */
@@ -83,7 +104,7 @@ type TransferLog = Awaited<ReturnType<typeof scanTransfers>>[number];
 function scanTransfers(args: { to: Address[] } | { from: Address[] }, fromBlock: bigint, toBlock: bigint) {
   const client = publicClient();
   return inChunks(fromBlock, toBlock, (a, b) =>
-    client.getContractEvents({ address: config.token.address, abi: erc20Abi, eventName: "Transfer", args, fromBlock: a, toBlock: b }),
+    client.getContractEvents({ address: config.tokens.map((t) => t.address), abi: erc20Abi, eventName: "Transfer", args, fromBlock: a, toBlock: b }),
   );
 }
 
@@ -115,7 +136,7 @@ async function fromChain(tills: Address[], owner: Address | undefined, sinceMs: 
     // A sweep is a till paying the owner; only money from outside is a sale.
     if (tillSet.has(l.args.from.toLowerCase()) || l.args.from.toLowerCase() === ownerLower) continue;
     const id = `${l.transactionHash}:${l.logIndex}`;
-    entries.set(id, enrich({ id, txHash: l.transactionHash, till: l.args.to, counterparty: l.args.from, amount: l.args.value, time: blockTimeCache.get(l.blockNumber) ?? Date.now() }, local[id], "direct"));
+    entries.set(id, enrich({ id, txHash: l.transactionHash, token: l.address, till: l.args.to, counterparty: l.args.from, amount: l.args.value, time: blockTimeCache.get(l.blockNumber) ?? Date.now() }, local[id], "direct"));
   }
   for (const l of outLogs) {
     if (!l.transactionHash || l.logIndex == null || l.blockNumber == null || !l.args.from || !l.args.to || l.args.value == null) continue;
@@ -123,7 +144,7 @@ async function fromChain(tills: Address[], owner: Address | undefined, sinceMs: 
     // Sweeps (till → owner) are not ledger lines; refunds (→ a customer) are.
     if (toLower === ownerLower || tillSet.has(toLower)) continue;
     const id = `${l.transactionHash}:${l.logIndex}`;
-    entries.set(id, enrich({ id, txHash: l.transactionHash, till: l.args.from, counterparty: l.args.to, amount: -l.args.value, time: blockTimeCache.get(l.blockNumber) ?? Date.now() }, local[id], "refund"));
+    entries.set(id, enrich({ id, txHash: l.transactionHash, token: l.address, till: l.args.from, counterparty: l.args.to, amount: -l.args.value, time: blockTimeCache.get(l.blockNumber) ?? Date.now() }, local[id], "refund"));
   }
 
   // Lines this device recorded earlier than the scan window.
@@ -134,6 +155,7 @@ async function fromChain(tills: Address[], owner: Address | undefined, sinceMs: 
     entries.set(r.id, {
       id: r.id,
       txHash: r.txHash,
+      token: r.token ?? config.token.address,
       till: r.till,
       counterparty: r.payer,
       amount,
@@ -153,6 +175,7 @@ async function fromChain(tills: Address[], owner: Address | undefined, sinceMs: 
 interface IndexedTransfer {
   id: string;
   txHash: `0x${string}`;
+  token: Address;
   from: Address;
   to: Address;
   value: string;
@@ -165,7 +188,7 @@ async function fromIndexer(tills: Address[], owner: Address | undefined, sinceMs
   const addrs = (owner ? [...tills, owner] : tills).map((a) => a.toLowerCase());
   const query = `query Ledger($addrs: [String!], $since: numeric!) {
     Transfer(where: {_and: [{timestamp: {_gte: $since}}, {_or: [{to: {_in: $addrs}}, {from: {_in: $addrs}}]}]}, order_by: {timestamp: desc}, limit: 1000) {
-      id txHash from to value timestamp
+      id txHash token from to value timestamp
     }
   }`;
   const ctrl = new AbortController();
@@ -190,9 +213,9 @@ async function fromIndexer(tills: Address[], owner: Address | undefined, sinceMs
       const to = r.to.toLowerCase();
       const time = Number(r.timestamp) * 1000;
       if (tillSet.has(to) && !tillSet.has(from) && from !== ownerLower) {
-        entries.push(enrich({ id: r.id, txHash: r.txHash, till: r.to, counterparty: r.from, amount: BigInt(r.value), time }, local[r.id], "direct"));
+        entries.push(enrich({ id: r.id, txHash: r.txHash, token: r.token, till: r.to, counterparty: r.from, amount: BigInt(r.value), time }, local[r.id], "direct"));
       } else if ((tillSet.has(from) || from === ownerLower) && !tillSet.has(to) && to !== ownerLower) {
-        entries.push(enrich({ id: r.id, txHash: r.txHash, till: r.from, counterparty: r.to, amount: -BigInt(r.value), time }, local[r.id], "refund"));
+        entries.push(enrich({ id: r.id, txHash: r.txHash, token: r.token, till: r.from, counterparty: r.to, amount: -BigInt(r.value), time }, local[r.id], "refund"));
       }
     }
     return entries;
@@ -248,7 +271,7 @@ export interface OtherToken {
 
 
 /**
- * Any ERC-20 other than the shop's token that has arrived at a till. Found from
+ * Any ERC-20 other than the accepted stablecoins that has arrived at a till. Found from
  * Transfer logs into the tills from any contract, then confirmed by balance, so
  * a token that has since left the till is not shown. Lane does not price these.
  */
@@ -266,8 +289,7 @@ export async function otherTokens(tills: Address[]): Promise<OtherToken[]> {
       strict: true, // skips ERC-721 transfers, whose value is indexed
     }),
   );
-  const main = config.token.address.toLowerCase();
-  const tokens = [...new Set(logs.map((l) => l.address.toLowerCase()))].filter((t) => t !== main) as Address[];
+  const tokens = [...new Set(logs.map((l) => l.address.toLowerCase()))].filter((t) => !acceptedToken(t)) as Address[];
   const out: OtherToken[] = [];
   for (const token of tokens) {
     const balances: Record<Address, bigint> = {};

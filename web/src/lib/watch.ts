@@ -4,6 +4,8 @@ import { config, inChunks, publicClient, RECENT_BLOCKS, socketClient } from "./c
 
 export interface IncomingTransfer {
   txHash: `0x${string}`;
+  /** Which accepted stablecoin arrived. */
+  token: Address;
   logIndex: number;
   from: Address;
   to: Address;
@@ -15,7 +17,7 @@ export interface IncomingTransfer {
 export type WatchStatus = "connecting" | "live" | "polling" | "offline";
 
 /**
- * Watch token transfers into a till. Prefers a websocket subscription and falls
+ * Watch transfers of every accepted stablecoin into a till. Prefers a websocket subscription and falls
  * back to polling when the socket drops. On every (re)connect it also replays
  * logs since the last block seen, so a payment that landed while the merchant's
  * phone was offline is still surfaced (flow §4.6).
@@ -25,7 +27,7 @@ export function watchTransfers(opts: {
   onTransfer: (t: IncomingTransfer) => void;
   onStatus?: (s: WatchStatus) => void;
 }): () => void {
-  const token = config.token.address;
+  const tokens = config.tokens.map((t) => t.address);
   const http = publicClient();
   const seen = new Set<string>();
   let lastBlock: bigint | undefined;
@@ -65,6 +67,7 @@ export function watchTransfers(opts: {
       if (lastBlock === undefined || log.blockNumber > lastBlock) lastBlock = log.blockNumber;
       opts.onTransfer({
         txHash: log.transactionHash,
+        token: log.address,
         logIndex: log.logIndex,
         from: args.from,
         to: args.to,
@@ -93,7 +96,7 @@ export function watchTransfers(opts: {
     if (from > head) return;
     try {
       const logs = await inChunks(from, head, (a, b) =>
-        http.getContractEvents({ address: token, abi: erc20Abi, eventName: "Transfer", args: { to: opts.till }, fromBlock: a, toBlock: b }),
+        http.getContractEvents({ address: tokens, abi: erc20Abi, eventName: "Transfer", args: { to: opts.till }, fromBlock: a, toBlock: b }),
       );
       await handle(logs as Log[]);
       if (lastBlock === undefined || head > lastBlock) lastBlock = head;
@@ -106,7 +109,7 @@ export function watchTransfers(opts: {
     if (stopped) return;
     setStatus("polling");
     unwatch = http.watchContractEvent({
-      address: token,
+      address: tokens,
       abi: erc20Abi,
       eventName: "Transfer",
       args: { to: opts.till },
@@ -127,7 +130,7 @@ export function watchTransfers(opts: {
     if (!ws) return startPolling();
     try {
       unwatch = ws.watchContractEvent({
-        address: token,
+        address: tokens,
         abi: erc20Abi,
         eventName: "Transfer",
         args: { to: opts.till },

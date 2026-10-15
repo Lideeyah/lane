@@ -32,6 +32,8 @@ export interface SaleRecord {
   /** `${txHash}:${logIndex}` */
   id: string;
   txHash: `0x${string}`;
+  /** Which accepted stablecoin. Absent on records from before Lane took several: the shop's token. */
+  token?: Address;
   till: Address;
   payer: Address;
   amount: string; // bigint as string

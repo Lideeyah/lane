@@ -50,7 +50,7 @@ export function useLedger(tills: Address[], owner?: Address): LedgerState {
         setOwnerBalance(l.ownerBalance);
       })
       .catch(() => {
-        if (n === seq.current) setLedger((prev) => prev ?? { entries: [], balances: {}, ownerBalance: 0n, source: "chain", catchingUp: true });
+        if (n === seq.current) setLedger((prev) => prev ?? { entries: [], balances: {}, ownerBalance: 0n, holdings: {}, source: "chain", catchingUp: true });
       })
       .finally(() => n === seq.current && setLoading(false));
   }, [key]);

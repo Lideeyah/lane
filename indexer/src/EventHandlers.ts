@@ -35,6 +35,7 @@ Token.Transfer.handler(async ({ event, context }) => {
   context.Transfer.set({
     id: `${event.transaction.hash}:${event.logIndex}`,
     txHash: event.transaction.hash,
+    token: event.srcAddress.toLowerCase(),
     from,
     to,
     value: event.params.value,

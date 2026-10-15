@@ -9,6 +9,8 @@ type Till {
 type Transfer {
   id: ID! # txHash:logIndex
   txHash: String!
+  # Which accepted stablecoin (USDC or USDT0).
+  token: String!
   from: String!
   to: String!
   value: BigInt!
