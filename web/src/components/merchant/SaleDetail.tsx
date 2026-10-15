@@ -1,6 +1,6 @@
 "use client";
 import { Amount, Band } from "../ui";
-import { explorerTx } from "@/lib/chain";
+import { acceptedToken, config, explorerTx } from "@/lib/chain";
 import { formatAmount, formatDay, formatTime, shortAddress } from "@/lib/format";
 import type { LedgerEntry } from "@/lib/ledger";
 import type { Till } from "@/lib/storage";
@@ -46,6 +46,12 @@ export function SaleDetail({
           <dd>{till?.label ?? shortAddress(entry.till)}</dd>
           <dt>{isRefund ? "Paid back to" : "Paid by"}</dt>
           <dd className="num">{shortAddress(entry.counterparty)}</dd>
+          {config.tokens.length > 1 && (
+            <>
+              <dt>{isRefund ? "Sent in" : "Paid in"}</dt>
+              <dd>{acceptedToken(entry.token)?.symbol ?? shortAddress(entry.token)}</dd>
+            </>
+          )}
           <dt>Time</dt>
           <dd className="num">
             {formatDay(entry.time)} · {formatTime(entry.time)}

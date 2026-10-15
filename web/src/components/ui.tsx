@@ -7,7 +7,7 @@ export function Amount({ value, size = "xl", symbol = true }: { value: bigint; s
   return (
     <span className={`amount-display amount-${size}`}>
       {formatAmount(value)}
-      {symbol && <span className="amount-sym">{config.token.symbol}</span>}
+      {symbol && <span className="amount-sym">{config.unit}</span>}
     </span>
   );
 }
