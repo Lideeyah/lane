@@ -45,7 +45,7 @@ export default function TillHome() {
         till: till as `0x${string}`,
         onTransfer: (t) => {
           const id = `${t.txHash}:${t.logIndex}`;
-          if (!salesStore.get(id)) salesStore.put({ id, txHash: t.txHash, till: t.to, payer: t.from, amount: t.amount.toString(), time: t.time, kind: "direct" });
+          if (!salesStore.get(id)) salesStore.put({ id, txHash: t.txHash, token: t.token, till: t.to, payer: t.from, amount: t.amount.toString(), time: t.time, kind: "direct" });
         },
       }),
     );
@@ -73,7 +73,7 @@ export default function TillHome() {
               <span className="muted">{shop.name}</span>
             </div>
           }
-          onRefundDifference={({ payer, amount, saleId }) => setRefund({ saleId, till: active.address, payer, amount, max: amount })}
+          onRefundDifference={({ payer, amount, saleId, token }) => setRefund({ saleId, till: active.address, payer, token, amount, max: amount })}
         />
       )}
       {tab === "tills" && <TillsSection shop={shop} ledger={ledger} onUse={() => setTab("till")} />}
@@ -98,7 +98,7 @@ export default function TillHome() {
           onRefund={() => {
             const already = refundsOf(sale.id).reduce((s, r) => s - r.amount, 0n);
             const max = sale.amount - already;
-            setRefund({ saleId: sale.id, till: sale.till, payer: sale.counterparty, amount: max, max });
+            setRefund({ saleId: sale.id, till: sale.till, payer: sale.counterparty, token: sale.token, amount: max, max });
           }}
         />
       )}

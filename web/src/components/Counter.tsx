@@ -34,7 +34,7 @@ export function Counter({
   till: CounterTill;
   shopName: string;
   /** Owner only. Staff phones cannot move money and get no refund action. */
-  onRefundDifference?: (t: { payer: Address; amount: bigint; saleId: string }) => void;
+  onRefundDifference?: (t: { payer: Address; amount: bigint; saleId: string; token: Address }) => void;
   header?: React.ReactNode;
 }) {
   const [text, setText] = useState("");
@@ -60,6 +60,7 @@ export function Counter({
       salesStore.put({
         id,
         txHash: t.txHash,
+        token: t.token,
         till: t.to,
         payer: t.from,
         amount: t.amount.toString(),
@@ -155,7 +156,7 @@ export function Counter({
           ) : onRefundDifference ? (
             <button
               className="btn btn-primary btn-xl"
-              onClick={() => onRefundDifference({ payer: phase.transfer.from, amount: diff, saleId: `${phase.transfer.txHash}:${phase.transfer.logIndex}` })}
+              onClick={() => onRefundDifference({ payer: phase.transfer.from, amount: diff, saleId: `${phase.transfer.txHash}:${phase.transfer.logIndex}`, token: phase.transfer.token })}
             >
               Refund the {formatAmount(diff)}
             </button>
